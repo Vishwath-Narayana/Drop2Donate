@@ -1,264 +1,329 @@
-const Claim = require('../models/Claim');
+const Claim    = require('../models/Claim');
 const Donation = require('../models/Donation');
 const Delivery = require('../models/Delivery');
-const User = require('../models/User');
+const User     = require('../models/User');
 
-// @desc    Claim a donation
-// @route   POST /api/claims
-// @access  Private (ngo)
+const emitTo = (req, room, event, data) => req.app.get('io')?.to(room).emit(event, data);
+const emit   = (req, event, data)       => req.app.get('io')?.emit(event, data);
+
+const addNotification = (userId, message, type = 'info') =>
+  User.findByIdAndUpdate(userId, {
+    $push: { notifications: { message, type, createdAt: new Date() } },
+  });
+
+// ── 1. NGO sends claim request ────────────────────────────────────────────────
+// POST /api/claims
+// Donation stays "available"; claim is "pending" until donor approves
 const createClaim = async (req, res, next) => {
   try {
-    const { donationId, deliveryRequired, message, scheduledPickupTime } = req.body;
+    const { donationId, message } = req.body;
 
     const donation = await Donation.findById(donationId);
-    if (!donation) {
-      return res.status(404).json({ success: false, message: 'Donation not found' });
-    }
-
+    if (!donation) return res.status(404).json({ success: false, message: 'Donation not found' });
     if (donation.status !== 'available') {
       return res.status(400).json({ success: false, message: 'Donation is no longer available' });
     }
-
-    if (new Date(donation.expiryTime) < new Date()) {
-      return res.status(400).json({ success: false, message: 'Donation has expired' });
+    // Food expiry check
+    if (donation.type === 'food' && donation.expiryTime && new Date(donation.expiryTime) < new Date()) {
+      return res.status(400).json({ success: false, message: 'This food donation has expired' });
     }
 
-    // Check if NGO already claimed this
-    const existingClaim = await Claim.findOne({ donationId, ngoId: req.user._id });
-    if (existingClaim) {
-      return res.status(409).json({ success: false, message: 'You have already claimed this donation' });
+    const existing = await Claim.findOne({ donationId, ngoId: req.user._id });
+    if (existing) {
+      return res.status(409).json({ success: false, message: 'You already have a claim on this donation' });
     }
 
     const claim = await Claim.create({
       donationId,
-      ngoId: req.user._id,
-      deliveryRequired: deliveryRequired || false,
-      deliveryStatus: deliveryRequired ? 'requested' : 'not_required',
+      ngoId:   req.user._id,
+      donorId: donation.donorId,
       message: message || '',
-      scheduledPickupTime: scheduledPickupTime || null,
+      statusHistory: [{ status: 'pending', changedBy: req.user._id }],
     });
-
-    // Mark donation as claimed
-    await Donation.findByIdAndUpdate(donationId, { status: 'claimed' });
 
     await claim.populate([
       { path: 'donationId', populate: { path: 'donorId', select: 'name email phone' } },
-      { path: 'ngoId', select: 'name email phone' },
+      { path: 'ngoId',   select: 'name email phone avatar' },
     ]);
 
-    // Notify donor via socket
-    const io = req.app.get('io');
-    if (io) {
-      io.to(`user_${donation.donorId}`).emit('donation_claimed', {
-        claim,
-        message: `Your donation "${donation.title}" has been claimed by ${req.user.name}`,
-      });
+    // Notify donor in real time
+    const msg = `${req.user.name} requested your donation "${donation.title}"`;
+    emitTo(req, `user_${donation.donorId}`, 'claim_requested', { claim, message: msg });
+    await addNotification(donation.donorId, msg, 'info');
 
-      // Notify available delivery agents if delivery is required
-      if (deliveryRequired) {
-        io.emit('delivery_requested', {
-          claim,
-          donationLocation: donation.location,
-          message: 'New delivery request available nearby',
-        });
-      }
-    }
-
-    // Add notification to donor
-    await User.findByIdAndUpdate(donation.donorId, {
-      $push: {
-        notifications: {
-          message: `Your donation "${donation.title}" has been claimed by ${req.user.name}`,
-          type: 'success',
-        },
-      },
-    });
-
-    res.status(201).json({ success: true, message: 'Donation claimed successfully', claim });
+    res.status(201).json({ success: true, message: 'Claim request sent — awaiting donor approval', claim });
   } catch (err) {
     next(err);
   }
 };
 
-// @desc    Get all claims by NGO
-// @route   GET /api/claims/my
-// @access  Private (ngo)
+// ── 2. Donor approves or rejects ──────────────────────────────────────────────
+// PUT /api/claims/:id/respond   body: { action: 'approve'|'reject' }
+const respondToClaim = async (req, res, next) => {
+  try {
+    const { action } = req.body;
+    if (!['approve', 'reject'].includes(action)) {
+      return res.status(400).json({ success: false, message: 'action must be approve or reject' });
+    }
+
+    const claim = await Claim.findById(req.params.id).populate('donationId');
+    if (!claim) return res.status(404).json({ success: false, message: 'Claim not found' });
+
+    if (claim.donorId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+    if (claim.status !== 'pending') {
+      return res.status(400).json({ success: false, message: 'Claim is not pending' });
+    }
+
+    const newStatus = action === 'approve' ? 'approved' : 'rejected';
+    claim.status = newStatus;
+    claim.statusHistory.push({ status: newStatus, changedBy: req.user._id });
+    await claim.save();
+
+    if (action === 'approve') {
+      // Mark donation as claimed so no other NGO can request it
+      await Donation.findByIdAndUpdate(claim.donationId._id, { status: 'claimed' });
+      // Cancel any other pending claims on this donation
+      await Claim.updateMany(
+        { donationId: claim.donationId._id, _id: { $ne: claim._id }, status: 'pending' },
+        { status: 'cancelled' }
+      );
+    }
+
+    const ngoMsg   = action === 'approve'
+      ? `Your claim for "${claim.donationId.title}" was approved! Choose pickup or delivery.`
+      : `Your claim for "${claim.donationId.title}" was rejected.`;
+    const donorMsg = action === 'approve'
+      ? `You approved ${claim.ngoId}'s claim.`
+      : `You rejected the claim.`;
+
+    emitTo(req, `user_${claim.ngoId}`, 'claim_response', {
+      claim, action, message: ngoMsg,
+    });
+    await addNotification(claim.ngoId, ngoMsg, action === 'approve' ? 'success' : 'warning');
+
+    res.json({ success: true, message: `Claim ${newStatus}`, claim });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// ── 3. NGO chooses pickup method (after approval) ─────────────────────────────
+// PUT /api/claims/:id/pickup-method   body: { method: 'self'|'delivery' }
+const choosePickupMethod = async (req, res, next) => {
+  try {
+    const { method } = req.body;
+    if (!['self', 'delivery'].includes(method)) {
+      return res.status(400).json({ success: false, message: 'method must be self or delivery' });
+    }
+
+    const claim = await Claim.findById(req.params.id).populate('donationId');
+    if (!claim) return res.status(404).json({ success: false, message: 'Claim not found' });
+    if (claim.ngoId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+    if (claim.status !== 'approved') {
+      return res.status(400).json({ success: false, message: 'Claim must be approved before choosing pickup method' });
+    }
+
+    const donation = claim.donationId;
+
+    // Validate delivery is allowed
+    if (method === 'delivery' && !donation.deliveryAllowed) {
+      return res.status(400).json({ success: false, message: 'Donor has not enabled delivery for this donation' });
+    }
+
+    if (method === 'self') {
+      claim.status = 'pickup_pending';
+      claim.pickupMethod = 'self';
+      claim.statusHistory.push({ status: 'pickup_pending', changedBy: req.user._id });
+      await claim.save();
+
+      const msg = `NGO "${req.user.name}" will self-pickup your donation "${donation.title}"`;
+      emitTo(req, `user_${claim.donorId}`, 'pickup_method_chosen', { claim, method, message: msg });
+      await addNotification(claim.donorId, msg, 'info');
+
+      return res.json({ success: true, message: 'Self-pickup confirmed. Visit the donor to collect.', claim });
+    }
+
+    // method === 'delivery': create delivery record
+    const ngo = await User.findById(req.user._id);
+    const delivery = await Delivery.create({
+      donationId:      donation._id,
+      claimId:         claim._id,
+      donorId:         donation.donorId,
+      ngoId:           req.user._id,
+      pickupLocation:  donation.location,
+      dropLocation:    ngo.location,
+    });
+
+    claim.status = 'delivery_requested';
+    claim.pickupMethod = 'delivery';
+    claim.statusHistory.push({ status: 'delivery_requested', changedBy: req.user._id });
+    await claim.save();
+
+    await delivery.populate([
+      { path: 'donationId', select: 'title type quantity expiryTime' },
+      { path: 'donorId',    select: 'name phone location' },
+      { path: 'ngoId',      select: 'name phone location' },
+    ]);
+
+    // Broadcast to all delivery agents
+    emit(req, 'new_delivery_request', {
+      delivery,
+      pickupLocation: donation.location,
+      message: 'New delivery request available near you',
+    });
+
+    const donorMsg = `A delivery agent has been requested for your donation "${donation.title}"`;
+    emitTo(req, `user_${claim.donorId}`, 'delivery_requested', { delivery, message: donorMsg });
+    await addNotification(claim.donorId, donorMsg, 'info');
+
+    res.json({ success: true, message: 'Delivery agent requested', claim, delivery });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// ── NGO confirms self-pickup completion ───────────────────────────────────────
+// PUT /api/claims/:id/confirm-pickup
+const confirmPickup = async (req, res, next) => {
+  try {
+    const claim = await Claim.findById(req.params.id).populate('donationId');
+    if (!claim) return res.status(404).json({ success: false, message: 'Claim not found' });
+    if (claim.ngoId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+    if (claim.status !== 'pickup_pending') {
+      return res.status(400).json({ success: false, message: 'Claim is not in pickup_pending state' });
+    }
+
+    claim.status = 'completed';
+    claim.statusHistory.push({ status: 'completed', changedBy: req.user._id });
+    await claim.save();
+
+    await Donation.findByIdAndUpdate(claim.donationId._id, { status: 'completed' });
+
+    const msg = `"${claim.donationId.title}" has been picked up and completed!`;
+    emitTo(req, `user_${claim.donorId}`, 'donation_completed', { claim, message: msg });
+    await addNotification(claim.donorId, msg, 'success');
+    emitTo(req, `user_${claim.ngoId}`, 'donation_completed', { claim, message: 'Pickup confirmed!' });
+
+    res.json({ success: true, message: 'Pickup confirmed. Donation marked complete.', claim });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// ── Cancel claim ──────────────────────────────────────────────────────────────
+// PUT /api/claims/:id/cancel
+const cancelClaim = async (req, res, next) => {
+  try {
+    const claim = await Claim.findById(req.params.id).populate('donationId');
+    if (!claim) return res.status(404).json({ success: false, message: 'Claim not found' });
+
+    const isNGO   = claim.ngoId.toString()   === req.user._id.toString();
+    const isDonor = claim.donorId.toString()  === req.user._id.toString();
+    if (!isNGO && !isDonor && req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+
+    const cancellableStatuses = ['pending', 'approved', 'pickup_pending'];
+    if (!cancellableStatuses.includes(claim.status)) {
+      return res.status(400).json({ success: false, message: `Cannot cancel a ${claim.status} claim` });
+    }
+
+    // Capture original status BEFORE modifying
+    const previousStatus = claim.status;
+
+    claim.status = 'cancelled';
+    claim.statusHistory.push({ status: 'cancelled', changedBy: req.user._id });
+    await claim.save();
+
+    // Free up donation if it had been approved/pickup_pending (was locked)
+    if (['approved', 'pickup_pending'].includes(previousStatus)) {
+      await Donation.findByIdAndUpdate(claim.donationId._id, { status: 'available' });
+    }
+
+    const notifyId = isNGO ? claim.donorId : claim.ngoId;
+    const msg = `A claim on "${claim.donationId.title}" was cancelled`;
+    emitTo(req, `user_${notifyId}`, 'claim_cancelled', { claimId: claim._id, message: msg });
+    await addNotification(notifyId, msg, 'warning');
+
+    res.json({ success: true, message: 'Claim cancelled', claim });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// ── Get NGO's own claims ──────────────────────────────────────────────────────
 const getMyClaims = async (req, res, next) => {
   try {
     const { status, page = 1, limit = 10 } = req.query;
     const query = { ngoId: req.user._id };
     if (status) query.status = status;
-
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const [claims, total] = await Promise.all([
       Claim.find(query)
-        .populate({
-          path: 'donationId',
-          populate: { path: 'donorId', select: 'name email phone avatar' },
-        })
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit)),
+        .populate({ path: 'donationId', populate: { path: 'donorId', select: 'name email phone avatar' } })
+        .sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit)),
       Claim.countDocuments(query),
     ]);
-
-    res.json({
-      success: true,
-      count: claims.length,
-      total,
-      page: parseInt(page),
-      pages: Math.ceil(total / parseInt(limit)),
-      claims,
-    });
-  } catch (err) {
-    next(err);
-  }
+    res.json({ success: true, count: claims.length, total, claims });
+  } catch (err) { next(err); }
 };
 
-// @desc    Get claims on donor's donations
-// @route   GET /api/claims/received
-// @access  Private (donor)
+// ── Get claims on donor's donations ──────────────────────────────────────────
 const getReceivedClaims = async (req, res, next) => {
   try {
-    const myDonations = await Donation.find({ donorId: req.user._id }).select('_id');
-    const donationIds = myDonations.map((d) => d._id);
+    const { status } = req.query;
+    const query = { donorId: req.user._id };
+    if (status) query.status = status;
 
-    const claims = await Claim.find({ donationId: { $in: donationIds } })
-      .populate('donationId', 'title type expiryTime')
-      .populate('ngoId', 'name email phone avatar verified')
+    const claims = await Claim.find(query)
+      .populate('donationId', 'title type expiryTime status deliveryAllowed')
+      .populate('ngoId', 'name email phone avatar verified rating')
       .sort({ createdAt: -1 });
-
     res.json({ success: true, count: claims.length, claims });
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
 
-// @desc    Get claim by ID
-// @route   GET /api/claims/:id
-// @access  Private
+// ── Get single claim ──────────────────────────────────────────────────────────
 const getClaim = async (req, res, next) => {
   try {
     const claim = await Claim.findById(req.params.id)
-      .populate({
-        path: 'donationId',
-        populate: { path: 'donorId', select: 'name email phone avatar location' },
-      })
+      .populate({ path: 'donationId', populate: { path: 'donorId', select: 'name email phone avatar location' } })
       .populate('ngoId', 'name email phone avatar location');
-
-    if (!claim) {
-      return res.status(404).json({ success: false, message: 'Claim not found' });
-    }
-
+    if (!claim) return res.status(404).json({ success: false, message: 'Claim not found' });
     res.json({ success: true, claim });
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
 
-// @desc    Update claim status (donor approves/rejects)
-// @route   PUT /api/claims/:id/status
-// @access  Private (donor)
-const updateClaimStatus = async (req, res, next) => {
-  try {
-    const { status } = req.body;
-
-    if (!['approved', 'rejected', 'completed', 'cancelled'].includes(status)) {
-      return res.status(400).json({ success: false, message: 'Invalid status' });
-    }
-
-    const claim = await Claim.findById(req.params.id).populate('donationId');
-    if (!claim) {
-      return res.status(404).json({ success: false, message: 'Claim not found' });
-    }
-
-    const donation = claim.donationId;
-
-    // Only donor can approve/reject their own donation claims
-    if (req.user.role === 'donor') {
-      if (donation.donorId.toString() !== req.user._id.toString()) {
-        return res.status(403).json({ success: false, message: 'Not authorized' });
-      }
-    }
-
-    // NGO can cancel their own claim
-    if (req.user.role === 'ngo') {
-      if (claim.ngoId.toString() !== req.user._id.toString()) {
-        return res.status(403).json({ success: false, message: 'Not authorized' });
-      }
-      if (status !== 'cancelled') {
-        return res.status(403).json({ success: false, message: 'NGOs can only cancel claims' });
-      }
-    }
-
-    claim.status = status;
-    await claim.save();
-
-    // If rejected or cancelled, make donation available again
-    if (['rejected', 'cancelled'].includes(status)) {
-      await Donation.findByIdAndUpdate(donation._id, { status: 'available' });
-    }
-
-    // Notify the NGO
-    const io = req.app.get('io');
-    if (io) {
-      io.to(`user_${claim.ngoId}`).emit('claim_status_updated', {
-        claim,
-        message: `Your claim has been ${status}`,
-      });
-    }
-
-    await User.findByIdAndUpdate(claim.ngoId, {
-      $push: {
-        notifications: {
-          message: `Your claim for "${donation.title}" has been ${status}`,
-          type: status === 'approved' ? 'success' : 'warning',
-        },
-      },
-    });
-
-    res.json({ success: true, message: `Claim ${status}`, claim });
-  } catch (err) {
-    next(err);
-  }
-};
-
-// @desc    Rate after claim completion
-// @route   POST /api/claims/:id/rate
-// @access  Private
+// ── Rate (donor rates NGO after completion) ───────────────────────────────────
 const rateClaim = async (req, res, next) => {
   try {
     const { score, feedback } = req.body;
-    const claim = await Claim.findById(req.params.id).populate('donationId');
-
+    const claim = await Claim.findById(req.params.id);
     if (!claim || claim.status !== 'completed') {
       return res.status(400).json({ success: false, message: 'Can only rate completed claims' });
     }
-
     claim.rating = { score, feedback };
     await claim.save();
 
-    // Update NGO rating
     const ngo = await User.findById(claim.ngoId);
     const newCount = ngo.rating.count + 1;
-    const newAvg = (ngo.rating.average * ngo.rating.count + score) / newCount;
+    const newAvg   = (ngo.rating.average * ngo.rating.count + score) / newCount;
     await User.findByIdAndUpdate(claim.ngoId, {
       'rating.average': Math.round(newAvg * 10) / 10,
-      'rating.count': newCount,
+      'rating.count':   newCount,
     });
-
     res.json({ success: true, message: 'Rating submitted' });
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
 
 module.exports = {
-  createClaim,
-  getMyClaims,
-  getReceivedClaims,
-  getClaim,
-  updateClaimStatus,
-  rateClaim,
+  createClaim, respondToClaim, choosePickupMethod, confirmPickup,
+  cancelClaim, getMyClaims, getReceivedClaims, getClaim, rateClaim,
 };

@@ -1,79 +1,24 @@
 const Delivery = require('../models/Delivery');
-const Claim = require('../models/Claim');
+const Claim    = require('../models/Claim');
 const Donation = require('../models/Donation');
-const User = require('../models/User');
+const User     = require('../models/User');
 
-// @desc    Request delivery for a claim
-// @route   POST /api/deliveries/request
-// @access  Private (ngo)
-const requestDelivery = async (req, res, next) => {
-  try {
-    const { claimId, notes } = req.body;
+const emitTo = (req, room, event, data) => req.app.get('io')?.to(room).emit(event, data);
+const emit   = (req, event, data)       => req.app.get('io')?.emit(event, data);
 
-    const claim = await Claim.findById(claimId).populate('donationId');
-    if (!claim) {
-      return res.status(404).json({ success: false, message: 'Claim not found' });
-    }
+const addNotification = (userId, message, type = 'info') =>
+  User.findByIdAndUpdate(userId, {
+    $push: { notifications: { message, type, createdAt: new Date() } },
+  });
 
-    if (claim.ngoId.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ success: false, message: 'Not authorized' });
-    }
-
-    const donation = claim.donationId;
-
-    const existing = await Delivery.findOne({ claimId });
-    if (existing) {
-      return res.status(409).json({ success: false, message: 'Delivery already requested for this claim' });
-    }
-
-    const ngo = await User.findById(req.user._id);
-
-    const delivery = await Delivery.create({
-      donationId: donation._id,
-      claimId,
-      donorId: donation.donorId,
-      ngoId: req.user._id,
-      pickupLocation: donation.location,
-      dropLocation: ngo.location,
-      notes: notes || '',
-    });
-
-    // Update claim delivery status
-    await Claim.findByIdAndUpdate(claimId, { deliveryStatus: 'requested', deliveryRequired: true });
-
-    await delivery.populate([
-      { path: 'donationId', select: 'title type' },
-      { path: 'donorId', select: 'name phone' },
-      { path: 'ngoId', select: 'name phone' },
-    ]);
-
-    // Broadcast to nearby delivery agents
-    const io = req.app.get('io');
-    if (io) {
-      io.emit('new_delivery_request', {
-        delivery,
-        pickupLocation: donation.location,
-        message: 'New delivery request available',
-      });
-    }
-
-    res.status(201).json({ success: true, message: 'Delivery requested successfully', delivery });
-  } catch (err) {
-    next(err);
-  }
-};
-
-// @desc    Get nearby delivery requests
-// @route   GET /api/deliveries/nearby
-// @access  Private (delivery agent)
+// ── Nearby available deliveries ───────────────────────────────────────────────
+// GET /api/deliveries/nearby
 const getNearbyDeliveries = async (req, res, next) => {
   try {
     const { lng, lat, radius = 15000 } = req.query;
-
     if (!lng || !lat) {
-      return res.status(400).json({ success: false, message: 'Longitude and latitude are required' });
+      return res.status(400).json({ success: false, message: 'lng and lat required' });
     }
-
     const deliveries = await Delivery.find({
       status: 'requested',
       deliveryAgentId: null,
@@ -85,33 +30,25 @@ const getNearbyDeliveries = async (req, res, next) => {
       },
     })
       .populate('donationId', 'title type quantity expiryTime')
-      .populate('donorId', 'name phone')
-      .populate('ngoId', 'name phone')
+      .populate('donorId',    'name phone')
+      .populate('ngoId',      'name phone')
       .limit(30);
 
     res.json({ success: true, count: deliveries.length, deliveries });
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
 
-// @desc    Accept a delivery
-// @route   POST /api/deliveries/accept/:id
-// @access  Private (delivery agent)
+// ── Accept delivery ───────────────────────────────────────────────────────────
+// POST /api/deliveries/accept/:id
 const acceptDelivery = async (req, res, next) => {
   try {
     const delivery = await Delivery.findById(req.params.id);
-
-    if (!delivery) {
-      return res.status(404).json({ success: false, message: 'Delivery not found' });
-    }
-
+    if (!delivery) return res.status(404).json({ success: false, message: 'Delivery not found' });
     if (delivery.status !== 'requested') {
       return res.status(400).json({ success: false, message: 'Delivery is no longer available' });
     }
-
     if (delivery.deliveryAgentId) {
-      return res.status(409).json({ success: false, message: 'Delivery already accepted by another agent' });
+      return res.status(409).json({ success: false, message: 'Already accepted by another agent' });
     }
 
     delivery.deliveryAgentId = req.user._id;
@@ -119,148 +56,104 @@ const acceptDelivery = async (req, res, next) => {
     delivery.statusTimestamps.accepted = new Date();
     await delivery.save();
 
-    await Claim.findByIdAndUpdate(delivery.claimId, { deliveryStatus: 'assigned' });
+    await Claim.findByIdAndUpdate(delivery.claimId, {
+      status: 'delivery_assigned',
+      $push: { statusHistory: { status: 'delivery_assigned', changedBy: req.user._id } },
+    });
     await User.findByIdAndUpdate(req.user._id, { isAvailable: false });
 
     await delivery.populate([
       { path: 'donationId', select: 'title type quantity' },
-      { path: 'donorId', select: 'name phone location' },
-      { path: 'ngoId', select: 'name phone location' },
+      { path: 'donorId',    select: 'name phone location' },
+      { path: 'ngoId',      select: 'name phone location' },
       { path: 'deliveryAgentId', select: 'name phone' },
     ]);
 
-    const io = req.app.get('io');
-    if (io) {
-      io.to(`user_${delivery.donorId}`).emit('delivery_accepted', {
-        delivery,
-        message: `Delivery agent ${req.user.name} has accepted the delivery`,
-      });
-      io.to(`user_${delivery.ngoId}`).emit('delivery_accepted', {
-        delivery,
-        message: `Delivery agent ${req.user.name} is on the way`,
-      });
+    const agentName = req.user.name;
+    const notifyBoth = [
+      { id: delivery.donorId._id || delivery.donorId, msg: `Delivery agent ${agentName} will pick up your donation` },
+      { id: delivery.ngoId._id   || delivery.ngoId,   msg: `Delivery agent ${agentName} accepted and is on the way` },
+    ];
+    for (const n of notifyBoth) {
+      emitTo(req, `user_${n.id}`, 'delivery_accepted', { delivery, message: n.msg });
+      await addNotification(n.id, n.msg, 'info');
     }
 
-    // Notify donor and NGO
-    await Promise.all([
-      User.findByIdAndUpdate(delivery.donorId, {
-        $push: { notifications: { message: `Delivery agent ${req.user.name} will pick up your donation`, type: 'info' } },
-      }),
-      User.findByIdAndUpdate(delivery.ngoId, {
-        $push: { notifications: { message: `Delivery agent ${req.user.name} is assigned to your delivery`, type: 'info' } },
-      }),
-    ]);
+    // Kick off delivery room
+    emit(req, `delivery_${delivery._id}`, 'delivery_accepted', { delivery });
 
     res.json({ success: true, message: 'Delivery accepted', delivery });
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
 
-// @desc    Update delivery status
-// @route   PUT /api/deliveries/status/:id
-// @access  Private (delivery agent)
+// ── Update delivery status ────────────────────────────────────────────────────
+// PUT /api/deliveries/status/:id
 const updateDeliveryStatus = async (req, res, next) => {
   try {
     const { status, agentLocation } = req.body;
 
-    const validTransitions = {
-      accepted: ['picked'],
-      picked: ['in_transit'],
-      in_transit: ['delivered'],
-    };
+    const valid = { accepted: 'picked', picked: 'in_transit', in_transit: 'delivered' };
 
     const delivery = await Delivery.findById(req.params.id);
-    if (!delivery) {
-      return res.status(404).json({ success: false, message: 'Delivery not found' });
-    }
-
-    if (delivery.deliveryAgentId.toString() !== req.user._id.toString()) {
+    if (!delivery) return res.status(404).json({ success: false, message: 'Delivery not found' });
+    if (delivery.deliveryAgentId?.toString() !== req.user._id.toString()) {
       return res.status(403).json({ success: false, message: 'Not authorized' });
     }
-
-    if (!validTransitions[delivery.status]?.includes(status)) {
+    if (valid[delivery.status] !== status) {
       return res.status(400).json({
         success: false,
-        message: `Cannot transition from ${delivery.status} to ${status}`,
+        message: `Cannot transition from "${delivery.status}" to "${status}"`,
       });
     }
 
     delivery.status = status;
     delivery.statusTimestamps[status] = new Date();
-
-    if (agentLocation) {
-      delivery.agentLocation = {
-        type: 'Point',
-        coordinates: agentLocation,
-      };
-    }
-
+    if (agentLocation) delivery.agentLocation = { type: 'Point', coordinates: agentLocation };
     await delivery.save();
 
-    // Map delivery status to claim delivery status
-    const claimDeliveryStatusMap = {
-      picked: 'picked',
-      in_transit: 'in_transit',
-      delivered: 'delivered',
-    };
-
-    if (claimDeliveryStatusMap[status]) {
+    // Map delivery status → claim status
+    const claimStatusMap = { picked: 'picked', in_transit: 'in_transit', delivered: 'completed' };
+    if (claimStatusMap[status]) {
       await Claim.findByIdAndUpdate(delivery.claimId, {
-        deliveryStatus: claimDeliveryStatusMap[status],
+        status: claimStatusMap[status],
+        $push: { statusHistory: { status: claimStatusMap[status], changedBy: req.user._id } },
       });
     }
 
-    // Mark agent available after delivery
     if (status === 'delivered') {
+      await Donation.findByIdAndUpdate(delivery.donationId, { status: 'completed' });
       await User.findByIdAndUpdate(delivery.deliveryAgentId, { isAvailable: true });
-      // Mark claim as completed
-      await Claim.findByIdAndUpdate(delivery.claimId, {
-        deliveryStatus: 'delivered',
-        status: 'completed',
-      });
     }
 
-    // Broadcast live location updates
-    const io = req.app.get('io');
-    if (io) {
-      const eventData = {
-        deliveryId: delivery._id,
-        status,
-        agentLocation: delivery.agentLocation,
-        message: `Delivery status updated to ${status}`,
-      };
-
-      io.to(`user_${delivery.donorId}`).emit('delivery_status_update', eventData);
-      io.to(`user_${delivery.ngoId}`).emit('delivery_status_update', eventData);
-      io.to(`delivery_${delivery._id}`).emit('delivery_location_update', eventData);
-    }
-
-    // Notify both parties
     const statusMessages = {
-      picked: 'has been picked up',
+      picked:     'has been picked up by the delivery agent',
       in_transit: 'is now in transit',
-      delivered: 'has been delivered successfully',
+      delivered:  'has been delivered! 🎉',
     };
+
+    const eventData = {
+      deliveryId: delivery._id,
+      status,
+      agentLocation: delivery.agentLocation,
+      message: `Delivery ${statusMessages[status] || status}`,
+    };
+
+    // Broadcast to donor, NGO, and delivery room
+    emitTo(req, `user_${delivery.donorId}`, 'delivery_status_update', eventData);
+    emitTo(req, `user_${delivery.ngoId}`,   'delivery_status_update', eventData);
+    emit(req, `delivery_${delivery._id}`,   'delivery_location_update', eventData);
 
     await Promise.all([
-      User.findByIdAndUpdate(delivery.donorId, {
-        $push: { notifications: { message: `Your donation ${statusMessages[status] || status}`, type: 'info' } },
-      }),
-      User.findByIdAndUpdate(delivery.ngoId, {
-        $push: { notifications: { message: `Your delivery ${statusMessages[status] || status}`, type: status === 'delivered' ? 'success' : 'info' } },
-      }),
+      addNotification(delivery.donorId, `Your donation ${statusMessages[status]}`, status === 'delivered' ? 'success' : 'info'),
+      addNotification(delivery.ngoId,   `Your delivery ${statusMessages[status]}`, status === 'delivered' ? 'success' : 'info'),
     ]);
 
-    res.json({ success: true, message: `Status updated to ${status}`, delivery });
-  } catch (err) {
-    next(err);
-  }
+    res.json({ success: true, message: `Status → ${status}`, delivery });
+  } catch (err) { next(err); }
 };
 
-// @desc    Update agent live location
-// @route   PUT /api/deliveries/location/:id
-// @access  Private (delivery agent)
+// ── Live agent location update ────────────────────────────────────────────────
+// PUT /api/deliveries/location/:id
 const updateAgentLocation = async (req, res, next) => {
   try {
     const { coordinates } = req.body; // [lng, lat]
@@ -270,98 +163,60 @@ const updateAgentLocation = async (req, res, next) => {
       { 'agentLocation.coordinates': coordinates },
       { new: true }
     );
+    if (!delivery) return res.status(404).json({ success: false, message: 'Delivery not found' });
 
-    if (!delivery) {
-      return res.status(404).json({ success: false, message: 'Delivery not found' });
-    }
-
-    const io = req.app.get('io');
-    if (io) {
-      io.to(`delivery_${delivery._id}`).emit('delivery_location_update', {
-        deliveryId: delivery._id,
-        agentLocation: delivery.agentLocation,
-      });
-    }
-
-    // Also update user location
-    await User.findByIdAndUpdate(req.user._id, {
-      'location.coordinates': coordinates,
+    emit(req, `delivery_${delivery._id}`, 'delivery_location_update', {
+      deliveryId: delivery._id,
+      agentLocation: delivery.agentLocation,
     });
 
+    await User.findByIdAndUpdate(req.user._id, { 'location.coordinates': coordinates });
+
     res.json({ success: true });
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
 
-// @desc    Get agent's active and past deliveries
-// @route   GET /api/deliveries/my
-// @access  Private (delivery agent)
+// ── Agent's deliveries ────────────────────────────────────────────────────────
 const getMyDeliveries = async (req, res, next) => {
   try {
     const { status, page = 1, limit = 10 } = req.query;
     const query = { deliveryAgentId: req.user._id };
     if (status) query.status = status;
-
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const [deliveries, total] = await Promise.all([
       Delivery.find(query)
         .populate('donationId', 'title type quantity')
-        .populate('donorId', 'name phone location')
-        .populate('ngoId', 'name phone location')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit)),
+        .populate('donorId',    'name phone location')
+        .populate('ngoId',      'name phone location')
+        .sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit)),
       Delivery.countDocuments(query),
     ]);
-
-    res.json({
-      success: true,
-      count: deliveries.length,
-      total,
-      page: parseInt(page),
-      pages: Math.ceil(total / parseInt(limit)),
-      deliveries,
-    });
-  } catch (err) {
-    next(err);
-  }
+    res.json({ success: true, count: deliveries.length, total, deliveries });
+  } catch (err) { next(err); }
 };
 
-// @desc    Get single delivery details
-// @route   GET /api/deliveries/:id
-// @access  Private
+// ── Single delivery ───────────────────────────────────────────────────────────
 const getDelivery = async (req, res, next) => {
   try {
     const delivery = await Delivery.findById(req.params.id)
       .populate('donationId', 'title type quantity description')
-      .populate('donorId', 'name phone location avatar')
-      .populate('ngoId', 'name phone location avatar')
+      .populate('donorId',    'name phone location avatar')
+      .populate('ngoId',      'name phone location avatar')
       .populate('deliveryAgentId', 'name phone isAvailable rating');
-
-    if (!delivery) {
-      return res.status(404).json({ success: false, message: 'Delivery not found' });
-    }
-
+    if (!delivery) return res.status(404).json({ success: false, message: 'Delivery not found' });
     res.json({ success: true, delivery });
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
 
-// @desc    Rate delivery agent
-// @route   POST /api/deliveries/:id/rate
-// @access  Private (ngo)
+// ── Rate agent ────────────────────────────────────────────────────────────────
 const rateDelivery = async (req, res, next) => {
   try {
     const { score, feedback } = req.body;
     const delivery = await Delivery.findById(req.params.id);
-
     if (!delivery || delivery.status !== 'delivered') {
       return res.status(400).json({ success: false, message: 'Can only rate completed deliveries' });
     }
-
     if (delivery.ngoId.toString() !== req.user._id.toString()) {
       return res.status(403).json({ success: false, message: 'Not authorized' });
     }
@@ -369,28 +224,18 @@ const rateDelivery = async (req, res, next) => {
     delivery.rating = { score, feedback };
     await delivery.save();
 
-    // Update agent average rating
     const agent = await User.findById(delivery.deliveryAgentId);
     const newCount = agent.rating.count + 1;
-    const newAvg = (agent.rating.average * agent.rating.count + score) / newCount;
+    const newAvg   = (agent.rating.average * agent.rating.count + score) / newCount;
     await User.findByIdAndUpdate(delivery.deliveryAgentId, {
       'rating.average': Math.round(newAvg * 10) / 10,
-      'rating.count': newCount,
+      'rating.count':   newCount,
     });
-
     res.json({ success: true, message: 'Rating submitted' });
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
 
 module.exports = {
-  requestDelivery,
-  getNearbyDeliveries,
-  acceptDelivery,
-  updateDeliveryStatus,
-  updateAgentLocation,
-  getMyDeliveries,
-  getDelivery,
-  rateDelivery,
+  getNearbyDeliveries, acceptDelivery, updateDeliveryStatus,
+  updateAgentLocation, getMyDeliveries, getDelivery, rateDelivery,
 };

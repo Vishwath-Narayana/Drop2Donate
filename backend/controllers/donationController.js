@@ -1,97 +1,85 @@
 const Donation = require('../models/Donation');
 const User = require('../models/User');
 
-// @desc    Create donation
-// @route   POST /api/donations
-// @access  Private (donor)
+// Helper: emit socket event safely
+const emit = (req, event, data) => {
+  const io = req.app.get('io');
+  if (io) io.emit(event, data);
+};
+const emitTo = (req, room, event, data) => {
+  const io = req.app.get('io');
+  if (io) io.to(room).emit(event, data);
+};
+
+// ── Create donation ───────────────────────────────────────────────────────────
+// POST /api/donations
 const createDonation = async (req, res, next) => {
   try {
     const {
-      title,
-      type,
-      description,
-      quantity,
-      location,
-      cookedAt,
-      expiryTime,
-      deliveryRequired,
-      servings,
-      allergens,
-      isVegetarian,
-      isVegan,
-      clothingDetails,
+      title, type, description, quantity, location,
+      cookedAt, expiryTime, deliveryAllowed,
+      servings, allergens, isVegetarian, isVegan, clothingDetails,
     } = req.body;
 
-    // Handle uploaded images — serve via /uploads/<filename>
+    // Clothes have no expiry — validate server-side
+    if (type === 'food' && !expiryTime) {
+      return res.status(400).json({ success: false, message: 'Expiry time is required for food donations' });
+    }
+
     const baseUrl = `${req.protocol}://${req.get('host')}`;
     const images = req.files
       ? req.files.map((f) => ({ url: `${baseUrl}/uploads/${f.filename}`, publicId: f.filename }))
       : [];
 
+    const parse = (v) => (typeof v === 'string' ? JSON.parse(v) : v);
+
     const donation = await Donation.create({
       title,
       type,
       description,
-      quantity: typeof quantity === 'string' ? JSON.parse(quantity) : quantity,
+      quantity: parse(quantity),
       donorId: req.user._id,
-      location: typeof location === 'string' ? JSON.parse(location) : location,
-      cookedAt: cookedAt || null,
-      expiryTime,
-      deliveryRequired: deliveryRequired === 'true' || deliveryRequired === true,
-      servings: servings || null,
-      allergens: allergens
-        ? typeof allergens === 'string'
-          ? JSON.parse(allergens)
-          : allergens
-        : [],
-      isVegetarian: isVegetarian === 'true' || isVegetarian === true,
-      isVegan: isVegan === 'true' || isVegan === true,
-      clothingDetails: clothingDetails
-        ? typeof clothingDetails === 'string'
-          ? JSON.parse(clothingDetails)
-          : clothingDetails
-        : {},
+      location: parse(location),
+      cookedAt: type === 'food' ? (cookedAt || null) : null,
+      expiryTime: type === 'food' ? expiryTime : null,
+      deliveryAllowed: deliveryAllowed !== undefined
+        ? (deliveryAllowed === 'true' || deliveryAllowed === true)
+        : true,
+      servings: type === 'food' ? (servings || null) : null,
+      allergens: type === 'food' ? (allergens ? parse(allergens) : []) : [],
+      isVegetarian: type === 'food' ? (isVegetarian === 'true' || isVegetarian === true) : false,
+      isVegan: type === 'food' ? (isVegan === 'true' || isVegan === true) : false,
+      clothingDetails: type === 'clothes' ? (clothingDetails ? parse(clothingDetails) : {}) : {},
       images,
     });
 
-    await donation.populate('donorId', 'name email phone avatar');
+    await donation.populate('donorId', 'name email phone avatar location');
 
-    // Emit socket event to notify nearby NGOs
-    const io = req.app.get('io');
-    if (io) {
-      io.emit('new_donation', {
-        donation,
-        message: `New ${type} donation available: ${title}`,
-      });
-    }
+    // Broadcast to NGOs
+    emit(req, 'new_donation', { donation, message: `New ${type} donation: ${title}` });
 
-    res.status(201).json({ success: true, message: 'Donation created successfully', donation });
+    res.status(201).json({ success: true, message: 'Donation created', donation });
   } catch (err) {
     next(err);
   }
 };
 
-// @desc    Get nearby donations (geo query)
-// @route   GET /api/donations/nearby
-// @access  Private
+// ── Nearby donations (NGO view) ───────────────────────────────────────────────
+// GET /api/donations/nearby
 const getNearbyDonations = async (req, res, next) => {
   try {
-    const {
-      lng,
-      lat,
-      radius = 10000, // default 10km in meters
-      type,
-      page = 1,
-      limit = 20,
-    } = req.query;
-
+    const { lng, lat, radius = 10000, type, page = 1, limit = 20 } = req.query;
     if (!lng || !lat) {
-      return res.status(400).json({ success: false, message: 'Longitude and latitude are required' });
+      return res.status(400).json({ success: false, message: 'lng and lat are required' });
     }
 
+    const now = new Date();
     const query = {
       status: 'available',
-      expiryTime: { $gt: new Date() },
+      $or: [
+        { type: 'clothes' },                  // clothes never expire
+        { type: 'food', expiryTime: { $gt: now } }, // food must not be expired
+      ],
       location: {
         $near: {
           $geometry: { type: 'Point', coordinates: [parseFloat(lng), parseFloat(lat)] },
@@ -99,45 +87,35 @@ const getNearbyDonations = async (req, res, next) => {
         },
       },
     };
-
     if (type && ['food', 'clothes'].includes(type)) {
+      delete query.$or;
       query.type = type;
+      if (type === 'food') query.expiryTime = { $gt: now };
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
+    const donations = await Donation.find(query)
+      .populate('donorId', 'name email phone avatar rating')
+      .sort({ expiryTime: 1 })
+      .skip(skip)
+      .limit(parseInt(limit));
 
-    const [donations, total] = await Promise.all([
-      Donation.find(query)
-        .populate('donorId', 'name email phone avatar rating')
-        .sort({ expiryTime: 1 })
-        .skip(skip)
-        .limit(parseInt(limit)),
-      Donation.countDocuments({ ...query, location: undefined, $and: [{ status: 'available' }, { expiryTime: { $gt: new Date() } }] }),
-    ]);
-
-    res.json({
-      success: true,
-      count: donations.length,
-      total,
-      page: parseInt(page),
-      pages: Math.ceil(total / parseInt(limit)),
-      donations,
-    });
+    res.json({ success: true, count: donations.length, donations });
   } catch (err) {
     next(err);
   }
 };
 
-// @desc    Get all donations for map view
-// @route   GET /api/donations/map
-// @access  Private
+// ── Map donations ─────────────────────────────────────────────────────────────
+// GET /api/donations/map
 const getMapDonations = async (req, res, next) => {
   try {
     const { lng, lat, radius = 25000 } = req.query;
+    const now = new Date();
 
     const query = {
       status: 'available',
-      expiryTime: { $gt: new Date() },
+      $or: [{ type: 'clothes' }, { type: 'food', expiryTime: { $gt: now } }],
     };
 
     if (lng && lat) {
@@ -151,8 +129,8 @@ const getMapDonations = async (req, res, next) => {
 
     const donations = await Donation.find(query)
       .populate('donorId', 'name avatar')
-      .select('title type location expiryTime status quantity donorId')
-      .limit(100);
+      .select('title type location expiryTime status quantity donorId deliveryAllowed')
+      .limit(200);
 
     res.json({ success: true, donations });
   } catch (err) {
@@ -160,84 +138,64 @@ const getMapDonations = async (req, res, next) => {
   }
 };
 
-// @desc    Get single donation
-// @route   GET /api/donations/:id
-// @access  Private
+// ── Single donation ───────────────────────────────────────────────────────────
+// GET /api/donations/:id
 const getDonation = async (req, res, next) => {
   try {
     const donation = await Donation.findById(req.params.id).populate(
-      'donorId',
-      'name email phone avatar location rating'
+      'donorId', 'name email phone avatar location rating'
     );
+    if (!donation) return res.status(404).json({ success: false, message: 'Donation not found' });
 
-    if (!donation) {
-      return res.status(404).json({ success: false, message: 'Donation not found' });
-    }
-
-    // Increment view count
     await Donation.findByIdAndUpdate(req.params.id, { $inc: { views: 1 } });
-
     res.json({ success: true, donation });
   } catch (err) {
     next(err);
   }
 };
 
-// @desc    Get donor's own donations
-// @route   GET /api/donations/my
-// @access  Private (donor)
+// ── Donor's own donations ─────────────────────────────────────────────────────
+// GET /api/donations/my
 const getMyDonations = async (req, res, next) => {
   try {
-    const { status, page = 1, limit = 10 } = req.query;
+    const { status, type, page = 1, limit = 10 } = req.query;
     const query = { donorId: req.user._id };
     if (status) query.status = status;
+    if (type) query.type = type;
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
-
     const [donations, total] = await Promise.all([
-      Donation.find(query)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit)),
+      Donation.find(query).sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit)),
       Donation.countDocuments(query),
     ]);
 
-    res.json({
-      success: true,
-      count: donations.length,
-      total,
-      page: parseInt(page),
-      pages: Math.ceil(total / parseInt(limit)),
-      donations,
-    });
+    res.json({ success: true, count: donations.length, total, donations });
   } catch (err) {
     next(err);
   }
 };
 
-// @desc    Update donation
-// @route   PUT /api/donations/:id
-// @access  Private (donor - own donations)
+// ── Update donation ───────────────────────────────────────────────────────────
+// PUT /api/donations/:id
 const updateDonation = async (req, res, next) => {
   try {
     const donation = await Donation.findById(req.params.id);
+    if (!donation) return res.status(404).json({ success: false, message: 'Donation not found' });
 
-    if (!donation) {
-      return res.status(404).json({ success: false, message: 'Donation not found' });
+    const isOwner = donation.donorId.toString() === req.user._id.toString();
+    if (!isOwner && req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
     }
-
-    if (donation.donorId.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
-      return res.status(403).json({ success: false, message: 'Not authorized to update this donation' });
-    }
-
     if (donation.status !== 'available') {
-      return res.status(400).json({ success: false, message: 'Cannot update a claimed or expired donation' });
+      return res.status(400).json({ success: false, message: 'Cannot update a non-available donation' });
     }
 
-    const allowed = ['title', 'description', 'quantity', 'expiryTime', 'deliveryRequired', 'servings', 'allergens', 'isVegetarian', 'isVegan', 'clothingDetails'];
-    allowed.forEach((field) => {
-      if (req.body[field] !== undefined) donation[field] = req.body[field];
-    });
+    const allowed = ['title', 'description', 'quantity', 'expiryTime', 'deliveryAllowed',
+      'servings', 'allergens', 'isVegetarian', 'isVegan', 'clothingDetails'];
+    allowed.forEach((f) => { if (req.body[f] !== undefined) donation[f] = req.body[f]; });
+
+    // Clothes cannot have expiryTime
+    if (donation.type === 'clothes') donation.expiryTime = null;
 
     await donation.save();
     res.json({ success: true, message: 'Donation updated', donation });
@@ -246,70 +204,43 @@ const updateDonation = async (req, res, next) => {
   }
 };
 
-// @desc    Cancel donation
-// @route   DELETE /api/donations/:id
-// @access  Private (donor - own donations)
+// ── Cancel donation ───────────────────────────────────────────────────────────
+// DELETE /api/donations/:id
 const cancelDonation = async (req, res, next) => {
   try {
     const donation = await Donation.findById(req.params.id);
+    if (!donation) return res.status(404).json({ success: false, message: 'Donation not found' });
 
-    if (!donation) {
-      return res.status(404).json({ success: false, message: 'Donation not found' });
-    }
-
-    if (donation.donorId.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+    const isOwner = donation.donorId.toString() === req.user._id.toString();
+    if (!isOwner && req.user.role !== 'admin') {
       return res.status(403).json({ success: false, message: 'Not authorized' });
     }
 
     donation.status = 'cancelled';
     await donation.save();
 
+    emit(req, 'donation_cancelled', { donationId: donation._id });
     res.json({ success: true, message: 'Donation cancelled' });
   } catch (err) {
     next(err);
   }
 };
 
-// @desc    Get donation statistics
-// @route   GET /api/donations/stats
-// @access  Private (admin)
+// ── Stats (admin) ─────────────────────────────────────────────────────────────
 const getDonationStats = async (req, res, next) => {
   try {
-    const stats = await Donation.aggregate([
-      {
-        $group: {
-          _id: '$status',
-          count: { $sum: 1 },
-        },
-      },
+    const [byStatus, byType, last7Days] = await Promise.all([
+      Donation.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]),
+      Donation.aggregate([{ $group: { _id: '$type', count: { $sum: 1 } } }]),
+      Donation.countDocuments({ createdAt: { $gte: new Date(Date.now() - 7 * 864e5) } }),
     ]);
-
-    const byType = await Donation.aggregate([
-      {
-        $group: {
-          _id: '$type',
-          count: { $sum: 1 },
-        },
-      },
-    ]);
-
-    const last7Days = await Donation.countDocuments({
-      createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
-    });
-
-    res.json({ success: true, stats, byType, last7Days });
+    res.json({ success: true, byStatus, byType, last7Days });
   } catch (err) {
     next(err);
   }
 };
 
 module.exports = {
-  createDonation,
-  getNearbyDonations,
-  getMapDonations,
-  getDonation,
-  getMyDonations,
-  updateDonation,
-  cancelDonation,
-  getDonationStats,
+  createDonation, getNearbyDonations, getMapDonations, getDonation,
+  getMyDonations, updateDonation, cancelDonation, getDonationStats,
 };

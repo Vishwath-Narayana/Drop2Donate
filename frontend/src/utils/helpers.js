@@ -21,6 +21,7 @@ export const isExpired = (expiryTime) => {
 };
 
 export const getExpiryUrgency = (expiryTime) => {
+  if (!expiryTime) return 'none'; // clothes or no expiry set
   const now = new Date();
   const expiry = new Date(expiryTime);
   if (!isAfter(expiry, now)) return 'expired';
@@ -35,16 +36,18 @@ export const getExpiryUrgency = (expiryTime) => {
 export const expiryColorClass = (expiryTime) => {
   const urgency = getExpiryUrgency(expiryTime);
   const map = {
-    expired: 'text-red-500',
+    none:     'text-gray-400',
+    expired:  'text-red-500',
     critical: 'text-red-600 font-semibold',
-    urgent: 'text-orange-500 font-medium',
-    warning: 'text-yellow-600',
-    safe: 'text-green-600',
+    urgent:   'text-orange-500 font-medium',
+    warning:  'text-yellow-600',
+    safe:     'text-green-600',
   };
   return map[urgency] || 'text-gray-500';
 };
 
 export const formatExpiry = (expiryTime) => {
+  if (!expiryTime) return 'No expiry';
   const urgency = getExpiryUrgency(expiryTime);
   if (urgency === 'expired') return 'Expired';
   const minutesLeft = differenceInMinutes(new Date(expiryTime), new Date());

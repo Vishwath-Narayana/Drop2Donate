@@ -98,24 +98,26 @@ export const donationAPI = {
 
 // Claim API
 export const claimAPI = {
-  create: (data) => api.post('/claims', data),
-  getMy: (params) => api.get('/claims/my', params),
-  getReceived: () => api.get('/claims/received'),
-  getById: (id) => api.get(`/claims/${id}`),
-  updateStatus: (id, data) => api.put(`/claims/${id}/status`, data),
-  rate: (id, data) => api.post(`/claims/${id}/rate`, data),
+  create:           (data)     => api.post('/claims', data),
+  getMy:            (params)   => api.get('/claims/my', params),
+  getReceived:      (params)   => api.get('/claims/received', params),
+  getById:          (id)       => api.get(`/claims/${id}`),
+  respondToClaim:   (id, data) => api.put(`/claims/${id}/respond`, data),
+  choosePickupMethod:(id, data) => api.put(`/claims/${id}/pickup-method`, data),
+  confirmPickup:    (id)       => api.put(`/claims/${id}/confirm-pickup`, {}),
+  cancel:           (id)       => api.put(`/claims/${id}/cancel`, {}),
+  rate:             (id, data) => api.post(`/claims/${id}/rate`, data),
 };
 
 // Delivery API
 export const deliveryAPI = {
-  request: (data) => api.post('/deliveries/request', data),
-  getNearby: (params) => api.get('/deliveries/nearby', params),
-  getMy: (params) => api.get('/deliveries/my', params),
-  getById: (id) => api.get(`/deliveries/${id}`),
-  accept: (id) => api.post(`/deliveries/accept/${id}`, {}),
-  updateStatus: (id, data) => api.put(`/deliveries/status/${id}`, data),
+  getNearby:      (params)   => api.get('/deliveries/nearby', params),
+  getMy:          (params)   => api.get('/deliveries/my', params),
+  getById:        (id)       => api.get(`/deliveries/${id}`),
+  accept:         (id)       => api.post(`/deliveries/accept/${id}`, {}),
+  updateStatus:   (id, data) => api.put(`/deliveries/status/${id}`, data),
   updateLocation: (id, data) => api.put(`/deliveries/location/${id}`, data),
-  rate: (id, data) => api.post(`/deliveries/${id}/rate`, data),
+  rate:           (id, data) => api.post(`/deliveries/${id}/rate`, data),
 };
 
 // Admin API

@@ -32,79 +32,63 @@ const donationSchema = new mongoose.Schema(
       required: true,
     },
     location: {
-      type: {
-        type: String,
-        enum: ['Point'],
-        default: 'Point',
-      },
-      coordinates: {
-        type: [Number], // [longitude, latitude]
-        required: true,
-      },
-      address: {
-        type: String,
-        default: '',
-      },
+      type: { type: String, enum: ['Point'], default: 'Point' },
+      coordinates: { type: [Number], required: true }, // [lng, lat]
+      address: { type: String, default: '' },
     },
-    cookedAt: {
-      type: Date,
-      default: null, // relevant for food donations
-    },
-    expiryTime: {
-      type: Date,
-      required: [true, 'Expiry time is required'],
-    },
+
+    // ── Food-only fields ──────────────────────────────────────────────────────
+    cookedAt: { type: Date, default: null },
+    // expiryTime is ONLY required for food; clothes have no expiry
+    expiryTime: { type: Date, default: null },
+
+    // ── Status lifecycle ──────────────────────────────────────────────────────
+    // available → claimed → completed | cancelled | expired (food-only)
     status: {
       type: String,
-      enum: ['available', 'claimed', 'expired', 'cancelled'],
+      enum: ['available', 'claimed', 'completed', 'expired', 'cancelled'],
       default: 'available',
     },
-    images: [
-      {
-        url: String,
-        publicId: String,
-      },
-    ],
-    deliveryRequired: {
-      type: Boolean,
-      default: false,
-    },
-    servings: {
-      type: Number,
-      default: null, // number of people the food can serve
-    },
+
+    // ── Delivery settings (set by donor at post time) ─────────────────────────
+    // deliveryAllowed: can an NGO request a delivery agent?
+    deliveryAllowed: { type: Boolean, default: true },
+
+    images: [{ url: String, publicId: String }],
+
+    // ── Food metadata ─────────────────────────────────────────────────────────
+    servings: { type: Number, default: null },
     allergens: [
       {
         type: String,
-        enum: ['gluten', 'dairy', 'nuts', 'eggs', 'soy', 'fish', 'shellfish', 'none'],
+        enum: ['gluten', 'dairy', 'nuts', 'eggs', 'soy', 'fish', 'shellfish'],
       },
     ],
-    isVegetarian: {
-      type: Boolean,
-      default: false,
-    },
-    isVegan: {
-      type: Boolean,
-      default: false,
-    },
+    isVegetarian: { type: Boolean, default: false },
+    isVegan: { type: Boolean, default: false },
+
+    // ── Clothes metadata ──────────────────────────────────────────────────────
     clothingDetails: {
       size: String,
-      gender: { type: String, enum: ['men', 'women', 'kids', 'unisex', ''] },
-      season: { type: String, enum: ['summer', 'winter', 'all-season', ''] },
-      condition: { type: String, enum: ['new', 'like-new', 'good', 'fair', ''] },
+      gender: { type: String, enum: ['men', 'women', 'kids', 'unisex', ''], default: '' },
+      season: { type: String, enum: ['summer', 'winter', 'all-season', ''], default: '' },
+      condition: { type: String, enum: ['new', 'like-new', 'good', 'fair', ''], default: '' },
     },
-    views: {
-      type: Number,
-      default: 0,
-    },
+
+    views: { type: Number, default: 0 },
   },
   { timestamps: true }
 );
 
-// Geospatial index + status index for nearby available donations queries
 donationSchema.index({ location: '2dsphere' });
-donationSchema.index({ status: 1, expiryTime: 1 });
+donationSchema.index({ status: 1, type: 1 });
+donationSchema.index({ status: 1, expiryTime: 1 }); // food expiry queries
 donationSchema.index({ donorId: 1, status: 1 });
-donationSchema.index({ type: 1, status: 1 });
+
+// Virtual: expired for food donations only
+donationSchema.virtual('isExpired').get(function () {
+  if (this.type !== 'food' || !this.expiryTime) return false;
+  return new Date(this.expiryTime) < new Date();
+});
 
 module.exports = mongoose.model('Donation', donationSchema);

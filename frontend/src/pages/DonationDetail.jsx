@@ -15,7 +15,7 @@ export default function DonationDetail() {
   const [loading, setLoading] = useState(true);
   const [claiming, setClaiming] = useState(false);
   const [showClaimForm, setShowClaimForm] = useState(false);
-  const [claimData, setClaimData] = useState({ deliveryRequired: false, message: '' });
+  const [message, setMessage] = useState('');
   const [currentImage, setCurrentImage] = useState(0);
 
   useEffect(() => {
@@ -23,7 +23,7 @@ export default function DonationDetail() {
       try {
         const data = await donationAPI.getById(id);
         setDonation(data.donation);
-      } catch (err) {
+      } catch {
         toast.error('Donation not found');
         navigate(-1);
       } finally {
@@ -40,12 +40,13 @@ export default function DonationDetail() {
     }
     setClaiming(true);
     try {
-      await claimAPI.create({ donationId: id, ...claimData });
-      setDonation((prev) => ({ ...prev, status: 'claimed' }));
+      await claimAPI.create({ donationId: id, message });
+      // Donation stays 'available' until donor approves — don't change local status
       setShowClaimForm(false);
-      toast.success('Donation claimed successfully!');
+      setMessage('');
+      toast.success('Claim request sent! Waiting for donor approval.');
     } catch (err) {
-      toast.error(err.message || 'Failed to claim donation');
+      toast.error(err.message || 'Failed to send claim request');
     } finally {
       setClaiming(false);
     }
@@ -57,7 +58,11 @@ export default function DonationDetail() {
 
   if (!donation) return null;
 
-  const { title, type, description, quantity, status, expiryTime, cookedAt, donorId, location, images, allergens, isVegetarian, isVegan, servings, clothingDetails, deliveryRequired, createdAt } = donation;
+  const {
+    title, type, description, quantity, status, expiryTime, cookedAt,
+    donorId, location, images, allergens, isVegetarian, isVegan, servings,
+    clothingDetails, deliveryAllowed, createdAt,
+  } = donation;
 
   const locationCoords = location?.coordinates ? [{
     lat: location.coordinates[1],
@@ -99,12 +104,14 @@ export default function DonationDetail() {
 
           {/* Title + status */}
           <div className="card">
-            <div className="flex items-start gap-3 mb-4">
-              <div className={`badge text-sm ${type === 'food' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'}`}>
+            <div className="flex items-start gap-2 mb-4 flex-wrap">
+              <span className={`badge text-sm ${type === 'food' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'}`}>
                 {type === 'food' ? '🍱' : '👗'} {type}
-              </div>
+              </span>
               <span className={`badge ${getStatusBadgeClass(status)}`}>{status}</span>
-              {deliveryRequired && <span className="badge bg-blue-100 text-blue-700">🚴 Delivery Available</span>}
+              {deliveryAllowed && (
+                <span className="badge bg-blue-100 text-blue-700">🚴 Delivery available</span>
+              )}
             </div>
 
             <h1 className="text-2xl font-bold text-gray-900 mb-3">{title}</h1>
@@ -120,8 +127,14 @@ export default function DonationDetail() {
                 <p className="font-semibold text-gray-900">{quantity?.amount} {quantity?.unit}</p>
               </div>
               <div>
-                <p className="text-gray-400 text-xs font-medium uppercase mb-1">Expiry</p>
-                <p className={`font-semibold ${expiryColorClass(expiryTime)}`}>{formatExpiry(expiryTime)}</p>
+                <p className="text-gray-400 text-xs font-medium uppercase mb-1">
+                  {type === 'food' ? 'Expiry' : 'Shelf life'}
+                </p>
+                {type === 'food' ? (
+                  <p className={`font-semibold ${expiryColorClass(expiryTime)}`}>{formatExpiry(expiryTime)}</p>
+                ) : (
+                  <p className="font-semibold text-gray-400">No expiry</p>
+                )}
               </div>
               {servings && (
                 <div>
@@ -129,7 +142,7 @@ export default function DonationDetail() {
                   <p className="font-semibold text-gray-900">{servings} people</p>
                 </div>
               )}
-              {cookedAt && (
+              {cookedAt && type === 'food' && (
                 <div>
                   <p className="text-gray-400 text-xs font-medium uppercase mb-1">Cooked At</p>
                   <p className="font-semibold text-gray-900">{formatDate(cookedAt, 'h:mm a, MMM d')}</p>
@@ -139,11 +152,15 @@ export default function DonationDetail() {
                 <p className="text-gray-400 text-xs font-medium uppercase mb-1">Posted</p>
                 <p className="font-semibold text-gray-900">{formatDate(createdAt, 'MMM d, h:mm a')}</p>
               </div>
+              <div>
+                <p className="text-gray-400 text-xs font-medium uppercase mb-1">Pickup</p>
+                <p className="font-semibold text-gray-900">{deliveryAllowed ? '🚴 Delivery OK' : '🤝 Self only'}</p>
+              </div>
             </div>
 
             {type === 'food' && (
               <div className="mt-4 pt-4 border-t border-gray-100 space-y-3">
-                <div className="flex items-center gap-3 text-sm">
+                <div className="flex items-center gap-3 text-sm flex-wrap">
                   {isVegetarian && <span className="badge bg-green-100 text-green-700">🌱 Vegetarian</span>}
                   {isVegan && <span className="badge bg-green-100 text-green-700">🌿 Vegan</span>}
                 </div>
@@ -160,56 +177,68 @@ export default function DonationDetail() {
               </div>
             )}
 
-            {type === 'clothes' && clothingDetails && (
+            {type === 'clothes' && clothingDetails && Object.values(clothingDetails).some(Boolean) && (
               <div className="mt-4 pt-4 border-t border-gray-100">
                 <div className="flex flex-wrap gap-2 text-sm">
-                  {clothingDetails.gender && <span className="badge bg-purple-100 text-purple-700">{clothingDetails.gender}</span>}
-                  {clothingDetails.size && <span className="badge bg-gray-100 text-gray-700">Size: {clothingDetails.size}</span>}
-                  {clothingDetails.season && <span className="badge bg-blue-100 text-blue-700">{clothingDetails.season}</span>}
+                  {clothingDetails.gender    && <span className="badge bg-purple-100 text-purple-700">{clothingDetails.gender}</span>}
+                  {clothingDetails.size      && <span className="badge bg-gray-100 text-gray-700">Size: {clothingDetails.size}</span>}
+                  {clothingDetails.season    && <span className="badge bg-blue-100 text-blue-700">{clothingDetails.season}</span>}
                   {clothingDetails.condition && <span className="badge bg-green-100 text-green-700">{clothingDetails.condition}</span>}
                 </div>
               </div>
             )}
           </div>
 
-          {/* Claim form for NGO */}
+          {/* Claim section for NGO */}
           {user.role === 'ngo' && status === 'available' && (
             <div className="card">
               {!showClaimForm ? (
-                <button
-                  onClick={() => setShowClaimForm(true)}
-                  className="btn-primary w-full text-base py-3"
-                >
-                  🤝 Claim This Donation
-                </button>
+                <div className="space-y-3">
+                  <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-sm text-blue-800">
+                    <p className="font-semibold mb-0.5">How claiming works</p>
+                    <p className="text-xs">Send a request → Donor approves → You choose self-pickup or delivery agent</p>
+                  </div>
+                  <button
+                    onClick={() => setShowClaimForm(true)}
+                    disabled={!user.verified}
+                    className="btn-primary w-full text-base py-3 disabled:opacity-50"
+                  >
+                    🤝 Request This Donation
+                  </button>
+                  {!user.verified && (
+                    <p className="text-xs text-amber-600 text-center font-medium">⚠️ Your NGO must be verified to claim donations</p>
+                  )}
+                </div>
               ) : (
                 <div className="space-y-4">
-                  <h3 className="font-semibold text-gray-800">Claim Details</h3>
+                  <h3 className="font-semibold text-gray-800">Send Claim Request</h3>
                   <textarea
-                    value={claimData.message}
-                    onChange={(e) => setClaimData((p) => ({ ...p, message: e.target.value }))}
+                    value={message}
+                    onChange={(e) => setMessage(e.target.value)}
                     className="input-field resize-none"
                     rows={3}
-                    placeholder="Optional message to donor..."
+                    placeholder="Optional message to donor — introduce your NGO or explain urgency…"
+                    maxLength={500}
                   />
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={claimData.deliveryRequired}
-                      onChange={(e) => setClaimData((p) => ({ ...p, deliveryRequired: e.target.checked }))}
-                      className="w-4 h-4 rounded text-green-600"
-                    />
-                    <span className="text-sm text-gray-700">Request delivery (we cannot pick up ourselves)</span>
-                  </label>
+                  <p className="text-xs text-gray-400">After the donor approves, you'll choose self-pickup or request a delivery agent.</p>
                   <div className="flex gap-3">
-                    <button onClick={() => setShowClaimForm(false)} className="btn-secondary flex-1">Cancel</button>
+                    <button onClick={() => { setShowClaimForm(false); setMessage(''); }} className="btn-secondary flex-1">Cancel</button>
                     <button onClick={handleClaim} disabled={claiming} className="btn-primary flex-1 flex items-center justify-center gap-2">
                       {claiming ? <LoadingSpinner size="sm" color="white" /> : null}
-                      {claiming ? 'Claiming...' : 'Confirm Claim'}
+                      {claiming ? 'Sending…' : 'Send Request'}
                     </button>
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Donor: donor sees their own donation */}
+          {user.role === 'donor' && donation.donorId?._id === user._id && (
+            <div className="card bg-orange-50 border border-orange-100">
+              <p className="text-sm font-semibold text-orange-800 mb-1">Your donation</p>
+              <p className="text-xs text-orange-600">Check your dashboard to approve or reject incoming claim requests.</p>
+              <Link to="/donor" className="mt-3 inline-block btn-donor text-sm py-2 px-4">Go to Dashboard</Link>
             </div>
           )}
         </div>
@@ -221,23 +250,22 @@ export default function DonationDetail() {
             <div className="card">
               <h3 className="font-semibold text-gray-800 mb-4">Donor</h3>
               <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold text-lg flex-shrink-0">
+                <div className="w-12 h-12 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold text-lg flex-shrink-0 overflow-hidden">
                   {donorId.avatar ? (
-                    <img src={donorId.avatar} alt={donorId.name} className="w-12 h-12 rounded-full object-cover" />
+                    <img src={donorId.avatar} alt={donorId.name} className="w-12 h-12 object-cover" />
                   ) : (
                     getInitials(donorId.name)
                   )}
                 </div>
                 <div>
                   <p className="font-semibold text-gray-900">{donorId.name}</p>
-                  <p className="text-xs text-gray-400">{donorId.email}</p>
                   {donorId.phone && <p className="text-xs text-gray-400">{donorId.phone}</p>}
                 </div>
               </div>
               {donorId.rating?.count > 0 && (
                 <div className="mt-3 flex items-center gap-1 text-sm">
                   <span className="text-yellow-500">★</span>
-                  <span className="font-semibold">{donorId.rating.average}</span>
+                  <span className="font-semibold">{donorId.rating.average.toFixed(1)}</span>
                   <span className="text-gray-400">({donorId.rating.count} reviews)</span>
                 </div>
               )}

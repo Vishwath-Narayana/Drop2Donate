@@ -1,19 +1,21 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import toast from 'react-hot-toast';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 
 const ROLES = [
-  { value: 'donor', label: 'Donor', icon: '🍱', desc: 'Share surplus food & clothes' },
-  { value: 'ngo', label: 'NGO', icon: '🏠', desc: 'Discover & claim donations' },
-  { value: 'delivery', label: 'Delivery Agent', icon: '🚴', desc: 'Transport donations' },
+  { value: 'donor',    label: 'Donor',          icon: '🍱', desc: 'Share surplus food & clothes' },
+  { value: 'ngo',      label: 'NGO',             icon: '🏠', desc: 'Discover & claim donations' },
+  { value: 'delivery', label: 'Delivery Agent',  icon: '🚴', desc: 'Transport donations' },
 ];
 
 export default function Register() {
   const { register } = useAuth();
   const navigate = useNavigate();
-  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'donor', phone: '' });
+  const [searchParams] = useSearchParams();
+  const preselectedRole = ROLES.find((r) => r.value === searchParams.get('role'))?.value || 'donor';
+  const [form, setForm] = useState({ name: '', email: '', password: '', role: preselectedRole, phone: '' });
   const [loading, setLoading] = useState(false);
 
   const handleChange = (e) => setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
@@ -41,6 +43,9 @@ export default function Register() {
     <div className="min-h-screen bg-gradient-to-br from-green-50 via-white to-orange-50 flex items-center justify-center p-4">
       <div className="w-full max-w-lg">
         <div className="text-center mb-8">
+          <Link to="/" className="inline-flex items-center gap-1 text-sm text-gray-400 hover:text-gray-600 mb-4 transition-colors">
+            ← Back to home
+          </Link>
           <div className="w-16 h-16 bg-green-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
             <span className="text-white font-black text-2xl">D2</span>
           </div>

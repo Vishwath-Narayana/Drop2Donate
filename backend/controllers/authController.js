@@ -119,11 +119,12 @@ const getMe = async (req, res, next) => {
 // @access  Private
 const updateProfile = async (req, res, next) => {
   try {
-    const { name, phone, location, isAvailable, avatar } = req.body;
+    const { name, phone, bio, location, isAvailable, avatar } = req.body;
 
     const updates = {};
     if (name) updates.name = name;
     if (phone !== undefined) updates.phone = phone;
+    if (bio !== undefined) updates.bio = bio;
     if (location) updates.location = location;
     if (isAvailable !== undefined) updates.isAvailable = isAvailable;
     if (avatar) updates.avatar = avatar;

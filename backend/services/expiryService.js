@@ -1,56 +1,46 @@
-const cron = require('node-cron');
+const cron     = require('node-cron');
 const Donation = require('../models/Donation');
-const Claim = require('../models/Claim');
+const Claim    = require('../models/Claim');
 
 /**
- * Expiry service: runs every 5 minutes to mark donations as expired
- * and cancel pending claims on expired donations.
+ * Runs every 5 minutes.
+ * Marks overdue FOOD donations as expired (clothes never expire).
+ * Cancels pending claims on expired food.
  */
 const startExpiryJob = (io) => {
-  // Run every 5 minutes
   cron.schedule('*/5 * * * *', async () => {
     try {
       const now = new Date();
 
-      // Find and expire overdue available donations
-      const expiredDonations = await Donation.find({
-        status: 'available',
+      const expired = await Donation.find({
+        type:       'food',
+        status:     'available',
         expiryTime: { $lte: now },
-      });
+      }).select('_id title');
 
-      if (expiredDonations.length > 0) {
-        const expiredIds = expiredDonations.map((d) => d._id);
+      if (expired.length === 0) return;
 
-        await Donation.updateMany(
-          { _id: { $in: expiredIds } },
-          { status: 'expired' }
-        );
+      const ids = expired.map((d) => d._id);
 
-        // Cancel pending claims on expired donations
-        await Claim.updateMany(
-          { donationId: { $in: expiredIds }, status: 'pending' },
-          { status: 'cancelled' }
-        );
+      await Donation.updateMany({ _id: { $in: ids } }, { status: 'expired' });
+      await Claim.updateMany(
+        { donationId: { $in: ids }, status: 'pending' },
+        { status: 'cancelled' }
+      );
 
-        // Broadcast expiry events
-        if (io) {
-          expiredDonations.forEach((donation) => {
-            io.emit('donation_expired', {
-              donationId: donation._id,
-              title: donation.title,
-              message: `Donation "${donation.title}" has expired`,
-            });
-          });
-        }
-
-        console.log(`[ExpiryJob] Marked ${expiredDonations.length} donation(s) as expired`);
+      if (io) {
+        expired.forEach((d) => {
+          io.emit('donation_expired', { donationId: d._id, title: d.title });
+        });
       }
+
+      console.log(`[ExpiryJob] Expired ${expired.length} food donation(s)`);
     } catch (err) {
-      console.error('[ExpiryJob] Error:', err.message);
+      console.error('[ExpiryJob]', err.message);
     }
   });
 
-  console.log('[ExpiryJob] Expiry scheduler started (every 5 minutes)');
+  console.log('[ExpiryJob] Food expiry scheduler started (every 5 min)');
 };
 
 module.exports = { startExpiryJob };
