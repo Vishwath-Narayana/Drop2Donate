@@ -22,9 +22,10 @@ const createDonation = async (req, res, next) => {
       clothingDetails,
     } = req.body;
 
-    // Handle uploaded images
+    // Handle uploaded images — serve via /uploads/<filename>
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
     const images = req.files
-      ? req.files.map((f) => ({ url: f.path, publicId: f.filename }))
+      ? req.files.map((f) => ({ url: `${baseUrl}/uploads/${f.filename}`, publicId: f.filename }))
       : [];
 
     const donation = await Donation.create({

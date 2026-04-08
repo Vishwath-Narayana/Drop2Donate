@@ -12,7 +12,6 @@ const userSchema = new mongoose.Schema(
     email: {
       type: String,
       required: [true, 'Email is required'],
-      unique: true,
       lowercase: true,
       match: [/^\S+@\S+\.\S+$/, 'Please provide a valid email'],
     },
@@ -88,8 +87,8 @@ const userSchema = new mongoose.Schema(
 
 // Geospatial index for location-based queries
 userSchema.index({ location: '2dsphere' });
-userSchema.index({ email: 1 });
 userSchema.index({ role: 1, isAvailable: 1 });
+// email index is created automatically by unique:true on the field
 
 // Hash password before saving
 userSchema.pre('save', async function (next) {

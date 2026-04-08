@@ -1,0 +1,30 @@
+Drop2Donate — Demo Accounts
+===========================
+
+DONOR
+  Email   : donor@demo.com
+  Password: password123
+  Role    : Donor — upload food/clothes donations
+
+NGO
+  Email   : ngo@demo.com
+  Password: password123
+  Role    : NGO — discover and claim donations
+  Note    : Needs admin verification before claiming
+
+DELIVERY AGENT
+  Email   : delivery@demo.com
+  Password: password123
+  Role    : Delivery — accept and transport donations
+
+ADMIN
+  Email   : admin@demo.com
+  Password: password123
+  Role    : Admin — verify NGOs, manage users, view analytics
+
+===========================
+API: http://localhost:5001/api
+Frontend: http://localhost:5173
+===========================
+Seed these accounts by running:
+  cd backend && node seed.js
