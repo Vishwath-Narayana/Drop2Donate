@@ -16,10 +16,16 @@ async function seed() {
   for (const account of accounts) {
     const existing = await User.findOne({ email: account.email });
     if (existing) {
-      console.log(`  SKIP  ${account.email} (already exists)`);
+      existing.name = account.name;
+      existing.password = account.password;
+      existing.role = account.role;
+      existing.verified = account.verified || false;
+      existing.isActive = true;
+      await existing.save();
+      console.log(`  UPDATED ${account.role.padEnd(8)} ${account.email}`);
       continue;
     }
-    await User.create(account);
+    await User.create({ ...account, isActive: true });
     console.log(`  CREATED ${account.role.padEnd(8)} ${account.email}`);
   }
 

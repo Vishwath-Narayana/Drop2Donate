@@ -4,85 +4,83 @@ import { formatExpiry, expiryColorClass, getStatusBadgeClass, truncate, getIniti
 export default function DonationCard({ donation, actions, compact = false }) {
   const { _id, title, type, description, quantity, status, expiryTime, donorId, images } = donation;
 
-  const typeColor = type === 'food' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700';
-  const typeIcon = type === 'food' ? '🍱' : '👗';
+  const typeIcon = type === 'food' ? '🍱' : '🧥';
+  const isExpired = type === 'food' && new Date(expiryTime) < new Date();
 
   return (
-    <div className="card hover:shadow-md transition-shadow duration-200">
-      {/* Image */}
-      {images?.[0] && !compact && (
-        <div className="relative -mx-5 -mt-5 mb-4 h-40 overflow-hidden rounded-t-2xl">
-          <img src={images[0].url} alt={title} className="w-full h-full object-cover" />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
-          <span className={`absolute top-3 left-3 badge ${typeColor}`}>
-            {typeIcon} {type}
+    <div className="card card-hover group flex flex-col h-full bg-white border border-slate-100/50">
+      {/* Visual Header */}
+      {images?.[0] && !compact ? (
+        <div className="relative -mx-6 -mt-6 mb-5 h-48 overflow-hidden rounded-t-[1.5rem]">
+          <img src={images[0].url} alt={title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
+          <div className="absolute inset-0 bg-gradient-to-t from-slate-900/40 via-transparent to-transparent" />
+          <div className="absolute top-4 left-4 flex gap-2">
+            <span className={`badge !bg-emerald-600 !text-white !border-none shadow-lg shadow-emerald-900/20`}>
+              {typeIcon} {type}
+            </span>
+          </div>
+          <div className="absolute top-4 right-4">
+             <span className={`badge ${getStatusBadgeClass(status)}`}>{status}</span>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between mb-4">
+          <span className="text-[10px] font-black uppercase tracking-widest text-emerald-600 flex items-center gap-2">
+            <span className="text-sm">{typeIcon}</span> {type}
           </span>
-          <span className={`absolute top-3 right-3 badge ${getStatusBadgeClass(status)}`}>
-            {status}
-          </span>
+          <span className={`badge ${getStatusBadgeClass(status)}`}>{status}</span>
         </div>
       )}
 
-      {/* Content */}
-      <div className="flex flex-col gap-2">
-        {/* Type + Status (no image) */}
-        {(!images?.[0] || compact) && (
-          <div className="flex items-center justify-between">
-            <span className={`badge ${typeColor}`}>{typeIcon} {type}</span>
-            <span className={`badge ${getStatusBadgeClass(status)}`}>{status}</span>
-          </div>
-        )}
-
+      {/* Body */}
+      <div className="flex-1 space-y-3 pb-4">
         <Link to={`/donations/${_id}`}>
-          <h3 className="font-semibold text-gray-900 hover:text-green-700 transition-colors text-base leading-snug">
+          <h3 className="text-lg font-black text-slate-900 group-hover:text-emerald-600 transition-colors tracking-tight uppercase leading-tight">
             {title}
           </h3>
         </Link>
-
+        
         {!compact && (
-          <p className="text-gray-500 text-sm leading-relaxed">{truncate(description, 120)}</p>
+          <p className="text-slate-500 text-sm leading-relaxed line-clamp-2">
+            {description}
+          </p>
         )}
 
-        <div className="flex items-center gap-3 text-xs text-gray-500 mt-1">
-          <span className="flex items-center gap-1">
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-            </svg>
-            {quantity?.amount} {quantity?.unit}
-          </span>
-          {type === 'food' ? (
-            <span className={`flex items-center gap-1 ${expiryColorClass(expiryTime)}`}>
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              {formatExpiry(expiryTime)}
-            </span>
-          ) : (
-            <span className="flex items-center gap-1 text-gray-400">
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-              No expiry
-            </span>
-          )}
+        <div className="flex items-center gap-4 pt-2">
+           <div className="flex items-center gap-1.5">
+             <span className="text-slate-400">📦</span>
+             <span className="text-[11px] font-bold text-slate-700 uppercase tracking-widest">
+               {quantity?.amount} {quantity?.unit}
+             </span>
+           </div>
+           
+           {type === 'food' && (
+             <div className={`flex items-center gap-1.5 ${isExpired ? 'text-rose-500' : 'text-amber-600'}`}>
+               <span className="text-sm animate-pulse">⏰</span>
+               <span className="text-[11px] font-bold uppercase tracking-widest">
+                 {formatExpiry(expiryTime)}
+               </span>
+             </div>
+           )}
         </div>
+      </div>
 
-        {/* Donor info */}
-        {donorId && !compact && (
-          <div className="flex items-center gap-2 pt-2 border-t border-gray-100 mt-1">
-            <div className="w-6 h-6 rounded-full bg-orange-500 flex items-center justify-center text-white text-xs font-bold">
+      {/* Footer Info */}
+      <div className="pt-4 border-t border-slate-50 mt-auto flex items-center justify-between">
+        {donorId && (
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-xl bg-slate-900 flex items-center justify-center text-white text-[10px] font-black italic">
               {donorId.avatar ? (
-                <img src={donorId.avatar} alt={donorId.name} className="w-6 h-6 rounded-full object-cover" />
+                <img src={donorId.avatar} alt={donorId.name} className="w-7 h-7 rounded-xl object-cover" />
               ) : (
                 getInitials(donorId.name)
               )}
             </div>
-            <span className="text-xs text-gray-500">{donorId.name}</span>
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{donorId.name}</span>
           </div>
         )}
-
-        {/* Actions */}
-        {actions && <div className="flex items-center gap-2 mt-2">{actions}</div>}
+        
+        {actions && <div className="flex-shrink-0">{actions}</div>}
       </div>
     </div>
   );

@@ -17,96 +17,103 @@ export default function Login() {
     setLoading(true);
     try {
       const data = await login(form.email, form.password);
-      toast.success(`Welcome back, ${data.user.name}!`);
+      toast.success(`Session synchronized. Welcome, ${data.user.name}`);
       navigate(`/${data.user.role}`);
     } catch (err) {
-      toast.error(err.message || 'Login failed');
+      toast.error(err.message || 'Authentication sequence failed');
     } finally {
       setLoading(false);
     }
   };
 
+  const demoAccounts = [
+    { role: 'Donor', email: 'donor@demo.com' },
+    { role: 'NGO', email: 'ngo@demo.com' },
+    { role: 'Delivery', email: 'delivery@demo.com' },
+    { role: 'Admin', email: 'admin@demo.com' },
+  ];
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-50 via-white to-orange-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        {/* Logo */}
-        <div className="text-center mb-8">
-          <Link to="/" className="inline-flex items-center gap-1 text-sm text-gray-400 hover:text-gray-600 mb-4 transition-colors">
-            ← Back to home
+    <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6 selection:bg-emerald-100 selection:text-emerald-900">
+      <div className="w-full max-w-sm space-y-12 animate-fade-in">
+        
+        {/* Brand Header */}
+        <div className="text-center space-y-6">
+          <Link to="/" className="inline-flex items-center gap-3 group">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-600 flex items-center justify-center shadow-2xl shadow-emerald-200 group-hover:scale-110 transition-all duration-500">
+              <span className="text-white font-black text-lg italic tracking-tighter">D2</span>
+            </div>
           </Link>
-          <div className="w-16 h-16 bg-green-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
-            <span className="text-white font-black text-2xl">D2</span>
+          <div className="space-y-1">
+            <h1 className="text-3xl font-black text-slate-900 tracking-tight uppercase italic">Access Terminal</h1>
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">Drop2Donate Protocol</p>
           </div>
-          <h1 className="text-2xl font-bold text-gray-900">Welcome back</h1>
-          <p className="text-gray-500 mt-1 text-sm">Sign in to Drop2Donate</p>
         </div>
 
-        <div className="card shadow-lg">
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">Email</label>
+        {/* Input Matrix */}
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="space-y-4">
+            <div className="group">
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 group-focus-within:text-emerald-600 transition-colors">
+                Identifier (Email)
+              </label>
               <input
                 type="email"
                 name="email"
                 value={form.email}
                 onChange={handleChange}
-                className="input-field"
-                placeholder="you@example.com"
+                className="input-field !rounded-2xl !bg-slate-50 !border-slate-100 focus:!bg-white"
+                placeholder="identity@network.com"
                 required
-                autoComplete="email"
               />
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">Password</label>
+            <div className="group">
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 group-focus-within:text-emerald-600 transition-colors">
+                Secret (Password)
+              </label>
               <input
                 type="password"
                 name="password"
                 value={form.password}
                 onChange={handleChange}
-                className="input-field"
+                className="input-field !rounded-2xl !bg-slate-50 !border-slate-100 focus:!bg-white"
                 placeholder="••••••••"
                 required
-                autoComplete="current-password"
               />
             </div>
-
-            <button type="submit" disabled={loading} className="btn-primary w-full flex items-center justify-center gap-2 mt-2">
-              {loading ? <LoadingSpinner size="sm" color="white" /> : null}
-              {loading ? 'Signing in...' : 'Sign in'}
-            </button>
-          </form>
-
-          <div className="mt-5 text-center">
-            <p className="text-sm text-gray-500">
-              Don&apos;t have an account?{' '}
-              <Link to="/register" className="text-green-600 font-semibold hover:underline">
-                Sign up
-              </Link>
-            </p>
           </div>
-        </div>
 
-        {/* Demo accounts */}
-        <div className="mt-6 p-4 bg-white rounded-xl border border-gray-100 shadow-sm">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Demo Accounts</p>
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            {[
-              { role: 'Donor', email: 'donor@demo.com', color: 'orange' },
-              { role: 'NGO', email: 'ngo@demo.com', color: 'green' },
-              { role: 'Delivery', email: 'delivery@demo.com', color: 'blue' },
-              { role: 'Admin', email: 'admin@demo.com', color: 'purple' },
-            ].map(({ role, email, color }) => (
+          <button type="submit" disabled={loading} className="btn-primary w-full !py-4 !rounded-2xl !text-[11px] font-black uppercase tracking-[0.2em] shadow-xl shadow-emerald-200">
+            {loading ? <LoadingSpinner size="sm" color="white" /> : 'Synchronize'}
+          </button>
+        </form>
+
+        {/* Bottom Link */}
+        <p className="text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">
+          New to the network?{' '}
+          <Link to="/register" className="text-emerald-600 hover:text-emerald-700 underline underline-offset-4">
+            Register Identity
+          </Link>
+        </p>
+
+        {/* Demo Bridge */}
+        <div className="pt-12 border-t border-slate-50">
+          <p className="text-[9px] font-black text-slate-300 uppercase tracking-widest mb-6 text-center italic">Test Nodes Available</p>
+          <div className="grid grid-cols-2 gap-3">
+            {demoAccounts.map(({ role, email }) => (
               <button
                 key={role}
                 type="button"
                 onClick={() => setForm({ email, password: 'password123' })}
-                className={`text-left p-2 rounded-lg border transition-colors hover:bg-gray-50 ${
-                  form.email === email ? 'border-green-400 bg-green-50' : 'border-gray-200'
+                className={`text-left p-4 rounded-2xl border transition-all duration-300 ${
+                  form.email === email 
+                    ? 'border-emerald-500 bg-emerald-50 shadow-lg shadow-emerald-100 scale-105' 
+                    : 'border-slate-100 bg-white hover:border-slate-200'
                 }`}
               >
-                <p className="font-semibold text-gray-800">{role}</p>
-                <p className="text-gray-400 truncate">{email}</p>
+                <p className="text-[10px] font-black text-slate-900 uppercase tracking-tight">{role}</p>
+                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mt-0.5 truncate">{email}</p>
               </button>
             ))}
           </div>

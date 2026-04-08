@@ -3,16 +3,32 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --brand-primary: #059669; /* Emerald 600 */
+    --brand-dark: #064e3b;    /* Emerald 900 */
+    --bg-main: #fcfcfc;
+    --text-main: #111827;
+    --text-muted: #6b7280;
+    --border-soft: #f3f4f6;
+    --card-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.03), 0 2px 8px -1px rgba(0, 0, 0, 0.02);
+  }
+
   * {
     box-sizing: border-box;
+    @apply border-gray-100;
   }
 
   body {
     margin: 0;
-    font-family: 'Inter', system-ui, sans-serif;
-    background-color: #f9fafb;
-    color: #111827;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    background-color: var(--bg-main);
+    color: var(--text-main);
     -webkit-font-smoothing: antialiased;
+    letter-spacing: -0.011em;
+  }
+
+  h1, h2, h3, h4 {
+    @apply tracking-tight font-bold;
   }
 
   #root {
@@ -23,54 +39,60 @@
     width: 100%;
     height: 100%;
     z-index: 1;
+    border-radius: 1.5rem;
   }
 }
 
 @layer components {
+  /* Premium Buttons */
   .btn-primary {
-    @apply bg-green-600 hover:bg-green-700 text-white font-semibold py-2.5 px-5 rounded-xl transition-all duration-200 shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 px-6 rounded-2xl transition-all duration-300 shadow-sm hover:shadow-emerald-200/50 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2;
   }
 
   .btn-secondary {
-    @apply bg-white hover:bg-gray-50 text-gray-700 font-semibold py-2.5 px-5 rounded-xl border border-gray-200 transition-all duration-200 shadow-sm hover:shadow-md;
+    @apply bg-white hover:bg-gray-50 text-gray-700 font-semibold py-2.5 px-6 rounded-2xl border border-gray-200 transition-all duration-300 shadow-sm hover:-translate-y-0.5 flex items-center justify-center gap-2;
   }
 
   .btn-danger {
-    @apply bg-red-600 hover:bg-red-700 text-white font-semibold py-2.5 px-5 rounded-xl transition-all duration-200 shadow-sm hover:shadow-md;
+    @apply bg-rose-50 hover:bg-rose-100 text-rose-600 font-semibold py-2.5 px-6 rounded-2xl transition-all duration-300 border border-rose-100 hover:-translate-y-0.5 flex items-center justify-center gap-2;
   }
 
   .btn-donor {
-    @apply bg-orange-500 hover:bg-orange-600 text-white font-semibold py-2.5 px-5 rounded-xl transition-all duration-200 shadow-sm hover:shadow-md;
+    @apply bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 px-6 rounded-2xl transition-all duration-300 shadow-sm hover:shadow-indigo-200/50 hover:-translate-y-0.5 items-center justify-center gap-2;
   }
 
   .btn-delivery {
-    @apply bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2.5 px-5 rounded-xl transition-all duration-200 shadow-sm hover:shadow-md;
+    @apply bg-slate-800 hover:bg-slate-900 text-white font-semibold py-2.5 px-6 rounded-2xl transition-all duration-300 shadow-sm hover:-translate-y-0.5 items-center justify-center gap-2;
   }
 
+  /* Minimalist Input */
   .input-field {
-    @apply w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200 bg-white placeholder-gray-400;
+    @apply w-full border border-gray-200 rounded-2xl px-5 py-3.5 text-sm focus:outline-none focus:ring-4 focus:ring-emerald-50 focus:border-emerald-500 transition-all duration-300 bg-white/50 backdrop-blur-sm placeholder-gray-400;
   }
 
+  /* Minimalist Card */
   .card {
-    @apply bg-white rounded-2xl shadow-sm border border-gray-100 p-5;
+    background-color: white;
+    border-radius: 1.5rem;
+    padding: 1.5rem;
+    box-shadow: var(--card-shadow);
+    border: 1px solid rgba(0, 0, 0, 0.02);
+    @apply transition-all duration-300;
+  }
+  
+  .card-hover:hover {
+    @apply -translate-y-1 shadow-md border-emerald-100/50;
   }
 
+  /* Clean Badges */
   .badge {
-    @apply inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold;
+    @apply inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider;
   }
 }
 
-/* Custom Leaflet marker icon styles */
-.custom-marker-donor div,
-.custom-marker-ngo div,
-.custom-marker-delivery div,
-.custom-marker-user div {
-  width: 32px;
-  height: 32px;
-  border-radius: 50% 50% 50% 0;
-  transform: rotate(-45deg);
-  border: 3px solid white;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+/* Glassmorphism Utilities */
+.glass {
+  @apply bg-white/70 backdrop-blur-xl border border-white/20;
 }
 
 .scrollbar-hide {

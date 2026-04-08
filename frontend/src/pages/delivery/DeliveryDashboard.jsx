@@ -33,8 +33,9 @@ export default function DeliveryDashboard() {
       const active = deliveries.find((d) => ['accepted', 'picked', 'in_transit'].includes(d.status));
       setActiveDelivery(active || null);
       if (active) setTab('active');
-    } catch {
-      toast.error('Failed to load deliveries');
+    } catch (err) {
+      console.error('[Delivery Load Error]:', err);
+      toast.error('Sync failed');
     } finally {
       setLoading(false);
     }
@@ -42,7 +43,6 @@ export default function DeliveryDashboard() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Fetch nearby deliveries once we have location
   useEffect(() => {
     if (!location) return;
     const fetchNearby = async () => {
@@ -54,23 +54,21 @@ export default function DeliveryDashboard() {
     fetchNearby();
   }, [location]);
 
-  // Live GPS tracking when there's an active delivery
   useEffect(() => {
     if (!activeDelivery) { clearWatch(watchIdRef.current); return; }
     watchIdRef.current = watchPosition((pos) => {
       emitLocationUpdate(activeDelivery._id, [pos.lng, pos.lat]);
     });
     return () => clearWatch(watchIdRef.current);
-  }, [activeDelivery?._id]);
+  }, [activeDelivery?._id, watchPosition, clearWatch, emitLocationUpdate]);
 
-  // ── Real-time events ───────────────────────────────────────────────────────
   useRealtime({
     new_delivery_request: ({ delivery }) => {
       setNearbyDeliveries((prev) => {
         if (prev.find((d) => d._id === delivery._id)) return prev;
         return [delivery, ...prev];
       });
-      toast('New delivery available nearby', { icon: '🚴' });
+      toast('Active route request detected', { icon: '🚴' });
     },
     delivery_status_update: ({ deliveryId, status, message }) => {
       setMyDeliveries((prev) => prev.map((d) => d._id === deliveryId ? { ...d, status } : d));
@@ -81,13 +79,11 @@ export default function DeliveryDashboard() {
       });
       if (message) toast(message, { icon: '🚴' });
     },
-    // Another agent accepted a delivery - remove from our nearby list
     delivery_accepted: ({ delivery }) => {
       setNearbyDeliveries((prev) => prev.filter((d) => d._id !== delivery._id));
     },
   });
 
-  // ── Actions ────────────────────────────────────────────────────────────────
   const handleAccept = async (deliveryId) => {
     setAccepting(deliveryId);
     try {
@@ -97,9 +93,9 @@ export default function DeliveryDashboard() {
       setNearbyDeliveries((prev) => prev.filter((x) => x._id !== deliveryId));
       setMyDeliveries((prev) => [d, ...prev.filter((x) => x._id !== deliveryId)]);
       setTab('active');
-      toast.success('Delivery accepted! Live tracking started.');
+      toast.success('Route synchronization started');
     } catch (err) {
-      toast.error(err.message || 'Failed to accept delivery');
+      toast.error(err.message || 'Route allocation failed');
     } finally {
       setAccepting(null);
     }
@@ -117,7 +113,7 @@ export default function DeliveryDashboard() {
       if (newStatus === 'delivered') {
         setActiveDelivery(null);
         setTab('history');
-        toast.success('Delivery completed! Great work.');
+        toast.success('Protocol completed. Excellent efficiency.');
       } else {
         setActiveDelivery(updated);
       }
@@ -135,14 +131,13 @@ export default function DeliveryDashboard() {
     try {
       await authAPI.updateProfile({ isAvailable: next });
       updateUser({ isAvailable: next });
-      toast.success(next ? 'You are now available for deliveries' : 'You are now offline');
+      toast.success(next ? 'Live in the grid' : 'Offline. Rest protocols initiated.');
     } catch (err) {
       setIsAvailable(!next);
       toast.error(err.message);
     }
   };
 
-  // ── Computed ───────────────────────────────────────────────────────────────
   const stats = {
     total:     myDeliveries.length,
     active:    myDeliveries.filter((d) => ['accepted', 'picked', 'in_transit'].includes(d.status)).length,
@@ -151,249 +146,205 @@ export default function DeliveryDashboard() {
   };
 
   const nextStatus      = { accepted: 'picked', picked: 'in_transit', in_transit: 'delivered' };
-  const nextStatusLabel = { accepted: '📦 Mark Picked Up', picked: '🚴 Mark In Transit', in_transit: '🎉 Mark Delivered' };
+  const nextStatusLabel = { accepted: 'Box Picked', picked: 'In Transit', in_transit: 'Success' };
   const historyDeliveries = myDeliveries.filter((d) => !['accepted', 'picked', 'in_transit'].includes(d.status));
 
   if (loading) return (
-    <div className="flex items-center justify-center h-64"><LoadingSpinner size="lg" /></div>
+    <div className="flex items-center justify-center min-h-[60vh]"><LoadingSpinner size="lg" /></div>
   );
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
-
+    <div className="max-w-6xl mx-auto px-6 py-10 space-y-12">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Delivery Dashboard</h1>
-          <p className="text-gray-500 text-sm mt-0.5">Welcome, {user.name}</p>
+      <div className="flex items-center justify-between gap-6 pb-2 border-b border-slate-100">
+        <div className="space-y-1">
+          <h1 className="text-4xl font-black text-slate-900 tracking-tight">Logistics Hub</h1>
+          <p className="text-slate-400 font-medium text-sm">Agent ID: <span className="text-slate-900 uppercase font-black tracking-widest">{user._id.slice(-6)}</span></p>
         </div>
         <button
           onClick={toggleAvailability}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm transition-all ${
+          className={`flex items-center gap-3 px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] transition-all duration-500 border-2 ${
             isAvailable
-              ? 'bg-green-100 text-green-700 hover:bg-green-200 border border-green-200'
-              : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-200'
+              ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
+              : 'bg-slate-100 text-slate-400 border-slate-200'
           }`}
         >
-          <div className={`w-2.5 h-2.5 rounded-full ${isAvailable ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
-          {isAvailable ? 'Available' : 'Offline'}
+          <span className={`w-2 h-2 rounded-full ${isAvailable ? 'bg-emerald-500 animate-pulse shadow-lg shadow-emerald-500/50' : 'bg-slate-300'}`} />
+          {isAvailable ? 'Status: Active' : 'Status: Offline'}
         </button>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Total"     value={stats.total}     icon="📦" color="blue"   />
-        <StatCard label="Active"    value={stats.active}    icon="🚴" color="orange" />
-        <StatCard label="Completed" value={stats.completed} icon="✅" color="green"  />
-        <StatCard label="Rating"    value={stats.rating}    icon="⭐" color="purple" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        <StatCard label="Total Routes" value={stats.total}     icon="🛣️" color="slate"   />
+        <StatCard label="Live Orders"  value={stats.active}    icon="🚴" color="indigo" />
+        <StatCard label="Successful"   value={stats.completed} icon="✅" color="emerald"  />
+        <StatCard label="Grid Rating"  value={stats.rating}    icon="⭐" color="amber" />
       </div>
 
-      {/* Active delivery banner */}
+      {/* Active Pulse Banner */}
       {activeDelivery && (
-        <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-2xl p-5 text-white shadow-lg">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-2.5 h-2.5 rounded-full bg-white animate-pulse" />
-            <h2 className="font-bold text-lg">Active Delivery</h2>
-            <span className="ml-auto bg-white/20 px-3 py-1 rounded-full text-xs font-semibold capitalize">
-              {activeDelivery.status.replace('_', ' ')}
-            </span>
-          </div>
-          <p className="font-semibold text-lg">{activeDelivery.donationId?.title}</p>
-          <div className="flex items-center gap-2 mt-2 text-blue-100 text-sm">
-            <span>From {activeDelivery.donorId?.name}</span>
-            <span>→</span>
-            <span>To {activeDelivery.ngoId?.name}</span>
-          </div>
-
-          {/* Progress steps */}
-          <div className="flex items-center gap-2 mt-4 bg-white/10 rounded-xl p-3">
-            {['accepted', 'picked', 'in_transit', 'delivered'].map((s, i, arr) => {
-              const statuses = ['accepted', 'picked', 'in_transit', 'delivered'];
-              const curIdx = statuses.indexOf(activeDelivery.status);
-              const done = i <= curIdx;
-              return (
-                <div key={s} className="flex items-center gap-2 flex-1">
-                  <div className={`flex-1 text-center text-xs font-medium ${done ? 'text-white' : 'text-blue-300'}`}>
-                    {s === 'accepted' ? 'Assigned' : s === 'in_transit' ? 'Transit' : s.charAt(0).toUpperCase() + s.slice(1)}
-                  </div>
-                  {i < arr.length - 1 && (
-                    <div className={`h-px flex-1 ${done && i < curIdx ? 'bg-white' : 'bg-white/30'}`} />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="flex gap-3 mt-4">
-            <Link
-              to={`/delivery/${activeDelivery._id}`}
-              className="flex-1 bg-white/15 hover:bg-white/25 text-white text-center py-2.5 rounded-xl text-sm font-medium transition-colors"
-            >
-              View Map
-            </Link>
-            {nextStatus[activeDelivery.status] && (
-              <button
-                onClick={() => handleStatusUpdate(nextStatus[activeDelivery.status])}
-                disabled={updatingStatus}
-                className="flex-1 bg-white text-blue-600 py-2.5 rounded-xl text-sm font-bold hover:bg-blue-50 transition-colors flex items-center justify-center gap-2"
-              >
-                {updatingStatus ? <LoadingSpinner size="sm" color="blue" /> : nextStatusLabel[activeDelivery.status]}
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Tabs */}
-      <div className="flex bg-gray-100 rounded-xl p-1 gap-1 w-fit">
-        {[
-          { key: 'nearby',  label: 'Nearby',  count: nearbyDeliveries.length },
-          { key: 'active',  label: 'Active',  count: stats.active, alert: stats.active > 0 },
-          { key: 'history', label: 'History', count: historyDeliveries.length },
-        ].map(({ key, label, count, alert }) => (
-          <button key={key} onClick={() => setTab(key)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
-              tab === key ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-            }`}>
-            {label}
-            <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${
-              alert ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-600'
-            }`}>{count}</span>
-          </button>
-        ))}
-      </div>
-
-      {/* ── Nearby tab ──────────────────────────────────────────────────────── */}
-      {tab === 'nearby' && (
-        <div>
-          {!location && (
-            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center gap-3 mb-4">
-              <span className="text-amber-600 text-xl">📍</span>
-              <p className="text-amber-800 text-sm font-medium">Enable location to see nearby deliveries</p>
-            </div>
-          )}
-          {nearbyDeliveries.length === 0 ? (
-            <div className="card text-center py-12">
-              <div className="text-5xl mb-3">📭</div>
-              <h3 className="font-semibold text-gray-900 text-lg mb-1">No deliveries nearby</h3>
-              <p className="text-gray-500 text-sm">Check back soon — new requests will appear here in real time</p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {nearbyDeliveries.map((delivery) => (
-                <div key={delivery._id} className="card hover:shadow-md transition-shadow">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-gray-900 truncate">{delivery.donationId?.title}</p>
-                      <div className="flex items-center gap-3 mt-1 text-xs text-gray-500 flex-wrap">
-                        <span>📦 {delivery.donationId?.quantity?.amount} {delivery.donationId?.quantity?.unit}</span>
-                        <span>From: {delivery.donorId?.name}</span>
-                        <span>To: {delivery.ngoId?.name}</span>
-                      </div>
-                      <p className="text-xs text-gray-400 mt-1">{formatTimeAgo(delivery.createdAt)}</p>
-                    </div>
-                    <button
-                      onClick={() => handleAccept(delivery._id)}
-                      disabled={accepting === delivery._id || !!activeDelivery || !isAvailable}
-                      className="btn-delivery text-xs py-2 px-4 flex-shrink-0 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {accepting === delivery._id ? <LoadingSpinner size="sm" color="white" /> : '✓'}
-                      Accept
-                    </button>
-                  </div>
-                  {!isAvailable && (
-                    <p className="text-xs text-amber-600 mt-2 font-medium">Set yourself to Available to accept deliveries</p>
-                  )}
-                  {activeDelivery && isAvailable && (
-                    <p className="text-xs text-blue-600 mt-2 font-medium">Complete your active delivery first</p>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── Active tab ──────────────────────────────────────────────────────── */}
-      {tab === 'active' && (
-        <div>
-          {!activeDelivery ? (
-            <div className="card text-center py-12">
-              <div className="text-5xl mb-3">🎉</div>
-              <h3 className="font-semibold text-gray-900 text-lg mb-1">No active deliveries</h3>
-              <p className="text-gray-500 text-sm mb-4">Head to Nearby tab to accept a delivery</p>
-              <button onClick={() => setTab('nearby')} className="btn-delivery text-sm py-2 px-5">
-                Browse Nearby
-              </button>
-            </div>
-          ) : (
-            <div className="card space-y-4">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h3 className="font-bold text-gray-900 text-lg">{activeDelivery.donationId?.title}</h3>
-                  <p className="text-sm text-gray-500 mt-0.5">Accepted {formatTimeAgo(activeDelivery.updatedAt)}</p>
-                </div>
-                <span className={`badge ${getStatusBadgeClass(activeDelivery.status)}`}>
-                  {activeDelivery.status.replace('_', ' ')}
-                </span>
+        <div className="bg-slate-900 rounded-[2.5rem] p-10 text-white relative overflow-hidden group">
+          <div className="absolute top-0 right-0 p-12 text-9xl opacity-10 group-hover:translate-x-12 transition-transform duration-700">🚚</div>
+          <div className="relative z-10 grid lg:grid-cols-2 gap-12 items-center">
+            <div className="space-y-6">
+              <div className="flex items-center gap-3">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <h2 className="text-[10px] font-black uppercase tracking-[0.3em] text-emerald-400">Live Logistics Protocol</h2>
               </div>
-
-              <div className="grid sm:grid-cols-2 gap-3">
-                <div className="bg-orange-50 rounded-xl p-3">
-                  <p className="text-xs text-orange-600 font-semibold mb-0.5">PICKUP FROM</p>
-                  <p className="font-medium text-gray-900 text-sm">{activeDelivery.donorId?.name}</p>
+              <h3 className="text-4xl font-black tracking-tight uppercase leading-none">{activeDelivery.donationId?.title}</h3>
+              <div className="space-y-4">
+                <div className="flex items-center gap-6">
+                  <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-lg border border-white/10 italic font-black">P</div>
+                  <div>
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Pickup Point</p>
+                    <p className="font-bold text-slate-200">{activeDelivery.donorId?.name}</p>
+                  </div>
                 </div>
-                <div className="bg-green-50 rounded-xl p-3">
-                  <p className="text-xs text-green-600 font-semibold mb-0.5">DELIVER TO</p>
-                  <p className="font-medium text-gray-900 text-sm">{activeDelivery.ngoId?.name}</p>
+                <div className="flex items-center gap-6">
+                  <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-lg border border-white/10 italic font-black text-emerald-500">D</div>
+                  <div>
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest text-emerald-900">Destination</p>
+                    <p className="font-bold text-slate-200">{activeDelivery.ngoId?.name}</p>
+                  </div>
                 </div>
               </div>
-
-              <div className="flex gap-3">
-                <Link to={`/delivery/${activeDelivery._id}`}
-                  className="flex-1 btn-secondary text-sm py-2.5 text-center">
-                  View Map & Details
+              <div className="flex gap-4 pt-4">
+                <Link to={`/delivery/${activeDelivery._id}`} className="flex-1 btn-primary !bg-white !text-slate-900 !rounded-2xl !py-4 text-xs font-black tracking-widest uppercase">
+                  Open Grid Map
                 </Link>
                 {nextStatus[activeDelivery.status] && (
-                  <button
-                    onClick={() => handleStatusUpdate(nextStatus[activeDelivery.status])}
-                    disabled={updatingStatus}
-                    className="flex-1 btn-delivery text-sm py-2.5 flex items-center justify-center gap-2"
-                  >
+                  <button onClick={() => handleStatusUpdate(nextStatus[activeDelivery.status])} disabled={updatingStatus} className="flex-1 btn-primary !bg-emerald-500 !text-white !rounded-2xl !py-4 text-xs font-black tracking-widest uppercase border-none">
                     {updatingStatus ? <LoadingSpinner size="sm" color="white" /> : nextStatusLabel[activeDelivery.status]}
                   </button>
                 )}
               </div>
             </div>
-          )}
+            
+            <div className="relative hidden lg:block">
+               <div className="p-8 bg-white/5 rounded-[2rem] border border-white/10 space-y-6">
+                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 text-center">Lifecycle Tracking</p>
+                 <div className="space-y-4">
+                   {['accepted', 'picked', 'in_transit', 'delivered'].map((s, i) => {
+                     const statuses = ['accepted', 'picked', 'in_transit', 'delivered'];
+                     const curIdx = statuses.indexOf(activeDelivery.status);
+                     const active = i === curIdx;
+                     const done = i < curIdx;
+                     return (
+                       <div key={s} className="flex items-center gap-4">
+                         <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-black transition-all ${
+                           active ? 'bg-emerald-500 text-white scale-110 shadow-lg shadow-emerald-500/50' : done ? 'bg-white/20 text-white' : 'bg-white/5 text-slate-600'
+                         }`}>
+                           {i + 1}
+                         </div>
+                         <div className={`text-[10px] font-black uppercase tracking-widest ${active ? 'text-white' : 'text-slate-500'}`}>
+                           {s.replace('_', ' ')}
+                         </div>
+                       </div>
+                     );
+                   })}
+                 </div>
+               </div>
+            </div>
+          </div>
         </div>
       )}
 
-      {/* ── History tab ─────────────────────────────────────────────────────── */}
-      {tab === 'history' && (
-        <div className="space-y-3">
-          {historyDeliveries.length === 0 ? (
-            <div className="card text-center py-12">
-              <div className="text-5xl mb-3">📋</div>
-              <h3 className="font-semibold text-gray-900 text-lg mb-1">No history yet</h3>
-              <p className="text-gray-500 text-sm">Completed deliveries will appear here</p>
-            </div>
-          ) : (
-            historyDeliveries.map((d) => (
-              <Link key={d._id} to={`/delivery/${d._id}`}
-                className="card flex items-center gap-4 hover:shadow-md transition-shadow block">
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium text-gray-900 text-sm truncate">{d.donationId?.title}</p>
-                  <p className="text-xs text-gray-400 mt-0.5">
-                    {d.ngoId?.name} · {formatDate(d.updatedAt)}
-                  </p>
-                </div>
-                <span className={`badge ${getStatusBadgeClass(d.status)} flex-shrink-0`}>{d.status}</span>
-              </Link>
-            ))
-          )}
-        </div>
-      )}
+      {/* Tabs */}
+      <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-2xl w-fit border border-slate-200/50">
+        {[
+          { key: 'nearby',  label: 'Grid View',  count: nearbyDeliveries.length },
+          { key: 'active',  label: 'Active Pulse',  count: stats.active, alert: stats.active > 0 },
+          { key: 'history', label: 'Completed', count: historyDeliveries.length },
+        ].map(({ key, label, count, alert }) => (
+          <button key={key} onClick={() => setTab(key)}
+            className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold uppercase tracking-widest transition-all duration-300 ${
+              tab === key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-slate-600'
+            }`}>
+            {label}
+            <span className={`px-2 py-0.5 rounded-full text-[10px] ${alert ? 'bg-indigo-500 text-white animate-pulse' : 'bg-slate-200 text-slate-500'}`}>{count}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Content Rendering */}
+      <div className="space-y-6">
+        {tab === 'nearby' && (
+          <div className="animate-fade-in">
+            {!location && (
+              <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 text-amber-600 text-[10px] font-black uppercase tracking-[0.2em] text-center mb-6">
+                📍 Location synchronization required for proximity scanning
+              </div>
+            )}
+            {nearbyDeliveries.length === 0 ? (
+              <div className="card text-center py-20 bg-slate-50/50 border-dashed border-2">
+                <div className="text-6xl mb-4 grayscale opacity-20">📭</div>
+                <h3 className="font-black text-slate-900 text-xl tracking-tight">Zone Inactive</h3>
+                <p className="text-slate-400 text-sm mt-1">Scanning the grid for new dispatch requests...</p>
+              </div>
+            ) : (
+              <div className="grid gap-4">
+                {nearbyDeliveries.map((delivery) => (
+                  <div key={delivery._id} className="card card-hover flex flex-col md:flex-row md:items-center justify-between gap-6 py-8">
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-4">
+                         <span className="text-2xl animate-bounce">📦</span>
+                         <div>
+                           <h4 className="font-black text-slate-900 uppercase tracking-tight text-xl">{delivery.donationId?.title}</h4>
+                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Posted {formatTimeAgo(delivery.createdAt)}</p>
+                         </div>
+                      </div>
+                      <div className="flex items-center gap-6 pl-10">
+                        <div>
+                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">From</p>
+                          <p className="text-xs font-bold text-slate-700">{delivery.donorId?.name}</p>
+                        </div>
+                        <div className="text-slate-200">/</div>
+                        <div>
+                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">To</p>
+                          <p className="text-xs font-bold text-slate-700">{delivery.ngoId?.name}</p>
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleAccept(delivery._id)}
+                      disabled={accepting === delivery._id || !!activeDelivery || !isAvailable}
+                      className="btn-primary !rounded-2xl !py-4 px-10 text-[10px] font-black tracking-[0.2em] uppercase disabled:opacity-20 translate-y-0 hover:-translate-y-1 transition-all"
+                    >
+                      {accepting === delivery._id ? <LoadingSpinner size="sm" color="white" /> : 'Lock Protocol'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === 'history' && (
+          <div className="grid gap-4 animate-fade-in">
+             {historyDeliveries.length === 0 ? (
+              <div className="card text-center py-20 bg-slate-50/50">
+                <p className="text-slate-400 font-medium tracking-widest uppercase text-xs">Archive empty.</p>
+              </div>
+            ) : (
+              historyDeliveries.map((d) => (
+                <Link key={d._id} to={`/delivery/${d._id}`} className="card flex items-center justify-between py-6 group">
+                   <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 rounded-2xl bg-emerald-50 flex items-center justify-center group-hover:bg-emerald-500 transition-colors group-hover:text-white text-emerald-600">
+                         <span className="text-lg">✓</span>
+                      </div>
+                      <div>
+                        <p className="font-black text-slate-900 uppercase tracking-tight">{d.donationId?.title}</p>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{d.ngoId?.name} · {formatDate(d.updatedAt)}</p>
+                      </div>
+                   </div>
+                   <span className={`badge ${getStatusBadgeClass(d.status)}`}>{d.status}</span>
+                </Link>
+              ))
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

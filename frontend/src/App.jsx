@@ -32,9 +32,9 @@ import UserManagement from './pages/admin/UserManagement';
 
 function AppLayout({ children }) {
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-white">
       <Navbar />
-      <main>{children}</main>
+      <main className="pt-20">{children}</main>
     </div>
   );
 }
@@ -49,7 +49,7 @@ function HomeRoute() {
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter future={{ v7_relativeSplatPath: true }}>
       <AuthProvider>
         <SocketProvider>
           <Toaster

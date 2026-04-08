@@ -144,7 +144,7 @@ const getAnalytics = async (req, res, next) => {
       Delivery.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]),
     ]);
 
-    // Monthly donation trends (last 6 months)
+    // Improved Monthly donation trends (last 6 months)
     const sixMonthsAgo = new Date();
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
 
@@ -156,12 +156,26 @@ const getAnalytics = async (req, res, next) => {
             year: { $year: '$createdAt' },
             month: { $month: '$createdAt' },
           },
-          count: { $sum: 1 },
+          total: { $sum: 1 },
           food: { $sum: { $cond: [{ $eq: ['$type', 'food'] }, 1, 0] } },
           clothes: { $sum: { $cond: [{ $eq: ['$type', 'clothes'] }, 1, 0] } },
         },
       },
       { $sort: { '_id.year': 1, '_id.month': 1 } },
+    ]);
+
+    // User signup velocity (last 30 days)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const signupTrends = await User.aggregate([
+      { $match: { createdAt: { $gte: thirtyDaysAgo } } },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { "_id": 1 } }
     ]);
 
     res.json({
@@ -175,6 +189,7 @@ const getAnalytics = async (req, res, next) => {
         recentDonations,
         pendingNGOs,
         monthlyTrends,
+        signupTrends,
       },
     });
   } catch (err) {

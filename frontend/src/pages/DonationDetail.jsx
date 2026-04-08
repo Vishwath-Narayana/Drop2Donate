@@ -4,7 +4,7 @@ import { donationAPI, claimAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import MapView from '../components/map/MapView';
 import LoadingSpinner from '../components/common/LoadingSpinner';
-import { formatDate, formatExpiry, expiryColorClass, getStatusBadgeClass, getInitials } from '../utils/helpers';
+import { formatDate, formatExpiry, getStatusBadgeClass, getInitials } from '../utils/helpers';
 import toast from 'react-hot-toast';
 
 export default function DonationDetail() {
@@ -23,37 +23,36 @@ export default function DonationDetail() {
       try {
         const data = await donationAPI.getById(id);
         setDonation(data.donation);
-      } catch {
-        toast.error('Donation not found');
+      } catch (err) {
+        toast.error('Protocol target not found');
         navigate(-1);
       } finally {
         setLoading(false);
       }
     };
     load();
-  }, [id]);
+  }, [id, navigate]);
 
   const handleClaim = async () => {
     if (!user.verified && user.role === 'ngo') {
-      toast.error('Your NGO must be verified before claiming');
+      toast.error('Node verification required for allocation');
       return;
     }
     setClaiming(true);
     try {
       await claimAPI.create({ donationId: id, message });
-      // Donation stays 'available' until donor approves — don't change local status
       setShowClaimForm(false);
       setMessage('');
-      toast.success('Claim request sent! Waiting for donor approval.');
+      toast.success('Allocation request broadcasted. Awaiting donor ACK.');
     } catch (err) {
-      toast.error(err.message || 'Failed to send claim request');
+      toast.error(err.message || 'Transmission failed');
     } finally {
       setClaiming(false);
     }
   };
 
   if (loading) return (
-    <div className="flex items-center justify-center min-h-screen"><LoadingSpinner size="xl" /></div>
+    <div className="flex items-center justify-center min-h-[60vh]"><LoadingSpinner size="xl" /></div>
   );
 
   if (!donation) return null;
@@ -64,36 +63,41 @@ export default function DonationDetail() {
     clothingDetails, deliveryAllowed, createdAt,
   } = donation;
 
-  const locationCoords = location?.coordinates ? [{
-    lat: location.coordinates[1],
-    lng: location.coordinates[0],
-  }] : [];
+  const typeIcon = type === 'food' ? '🍱' : '🧥';
 
   return (
-    <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
-      <button onClick={() => navigate(-1)} className="flex items-center gap-2 text-gray-500 hover:text-gray-700 mb-5 text-sm font-medium">
-        ← Back
-      </button>
+    <div className="max-w-6xl mx-auto px-6 py-10 space-y-12 animate-fade-in">
+      {/* Header Info */}
+      <div className="flex items-center justify-between pb-6 border-b border-slate-100">
+        <div className="space-y-1">
+          <button onClick={() => navigate(-1)} className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-900 transition-colors mb-2">
+            ← Return to Hub
+          </button>
+          <div className="flex items-center gap-4">
+             <h1 className="text-4xl font-black text-slate-900 tracking-tight uppercase leading-none">{title}</h1>
+             <span className={`badge ${getStatusBadgeClass(status)}`}>{status}</span>
+          </div>
+        </div>
+        <div className="text-right hidden sm:block">
+           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Post Timestamp</p>
+           <p className="text-sm font-bold text-slate-900">{formatDate(createdAt, 'MMM d, h:mm a')}</p>
+        </div>
+      </div>
 
-      <div className="grid lg:grid-cols-5 gap-6">
-        {/* Main content */}
-        <div className="lg:col-span-3 space-y-5">
-          {/* Images */}
+      <div className="grid lg:grid-cols-12 gap-12">
+        {/* Left Matrix: Content */}
+        <div className="lg:col-span-8 space-y-10">
+          
+          {/* Visual Data */}
           {images?.length > 0 && (
-            <div className="rounded-2xl overflow-hidden bg-gray-100">
-              <img
-                src={images[currentImage]?.url}
-                alt={title}
-                className="w-full h-72 object-cover"
-              />
+            <div className="space-y-4">
+              <div className="rounded-[2.5rem] overflow-hidden bg-slate-50 aspect-video border border-slate-100 shadow-2xl shadow-slate-200/50">
+                <img src={images[currentImage]?.url} alt={title} className="w-full h-full object-cover" />
+              </div>
               {images.length > 1 && (
-                <div className="flex gap-2 p-3">
+                <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide">
                   {images.map((img, i) => (
-                    <button
-                      key={i}
-                      onClick={() => setCurrentImage(i)}
-                      className={`w-14 h-14 rounded-xl overflow-hidden border-2 transition-all ${i === currentImage ? 'border-green-500' : 'border-transparent'}`}
-                    >
+                    <button key={i} onClick={() => setCurrentImage(i)} className={`w-20 h-20 rounded-2xl overflow-hidden border-2 transition-all flex-shrink-0 ${i === currentImage ? 'border-emerald-500 scale-105 shadow-lg shadow-emerald-100' : 'border-transparent'}`}>
                       <img src={img.url} alt="" className="w-full h-full object-cover" />
                     </button>
                   ))}
@@ -102,187 +106,142 @@ export default function DonationDetail() {
             </div>
           )}
 
-          {/* Title + status */}
-          <div className="card">
-            <div className="flex items-start gap-2 mb-4 flex-wrap">
-              <span className={`badge text-sm ${type === 'food' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'}`}>
-                {type === 'food' ? '🍱' : '👗'} {type}
-              </span>
-              <span className={`badge ${getStatusBadgeClass(status)}`}>{status}</span>
-              {deliveryAllowed && (
-                <span className="badge bg-blue-100 text-blue-700">🚴 Delivery available</span>
-              )}
+          {/* Description Matrix */}
+          <div className="space-y-6">
+            <div className="flex items-center gap-3">
+               <span className="text-[10px] font-black text-emerald-600 uppercase tracking-[0.3em] font-black italic">Protocol Description</span>
+               <div className="h-px flex-1 bg-slate-50" />
             </div>
-
-            <h1 className="text-2xl font-bold text-gray-900 mb-3">{title}</h1>
-            <p className="text-gray-600 leading-relaxed">{description}</p>
+            <p className="text-lg text-slate-600 leading-relaxed font-medium italic">"{description}"</p>
           </div>
 
-          {/* Details */}
-          <div className="card">
-            <h2 className="font-semibold text-gray-800 mb-4">Donation Details</h2>
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div>
-                <p className="text-gray-400 text-xs font-medium uppercase mb-1">Quantity</p>
-                <p className="font-semibold text-gray-900">{quantity?.amount} {quantity?.unit}</p>
+          {/* Technical Specs */}
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div className="p-8 bg-slate-50 rounded-[2rem] border border-slate-100 space-y-4">
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest italic">Core Logistics</p>
+              <div className="space-y-1">
+                 <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Inventory Size</p>
+                 <p className="text-xl font-black text-slate-900">{quantity?.amount} {quantity?.unit}</p>
               </div>
-              <div>
-                <p className="text-gray-400 text-xs font-medium uppercase mb-1">
-                  {type === 'food' ? 'Expiry' : 'Shelf life'}
-                </p>
-                {type === 'food' ? (
-                  <p className={`font-semibold ${expiryColorClass(expiryTime)}`}>{formatExpiry(expiryTime)}</p>
-                ) : (
-                  <p className="font-semibold text-gray-400">No expiry</p>
-                )}
-              </div>
+              {type === 'food' && (
+                <div className="space-y-1">
+                   <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Shelf Pulse</p>
+                   <p className="text-xl font-black text-amber-600">{formatExpiry(expiryTime)}</p>
+                </div>
+              )}
               {servings && (
-                <div>
-                  <p className="text-gray-400 text-xs font-medium uppercase mb-1">Serves</p>
-                  <p className="font-semibold text-gray-900">{servings} people</p>
+                <div className="space-y-1">
+                   <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Capacity Estimate</p>
+                   <p className="text-xl font-black text-slate-900">{servings} Individuals</p>
                 </div>
               )}
-              {cookedAt && type === 'food' && (
-                <div>
-                  <p className="text-gray-400 text-xs font-medium uppercase mb-1">Cooked At</p>
-                  <p className="font-semibold text-gray-900">{formatDate(cookedAt, 'h:mm a, MMM d')}</p>
-                </div>
-              )}
-              <div>
-                <p className="text-gray-400 text-xs font-medium uppercase mb-1">Posted</p>
-                <p className="font-semibold text-gray-900">{formatDate(createdAt, 'MMM d, h:mm a')}</p>
-              </div>
-              <div>
-                <p className="text-gray-400 text-xs font-medium uppercase mb-1">Pickup</p>
-                <p className="font-semibold text-gray-900">{deliveryAllowed ? '🚴 Delivery OK' : '🤝 Self only'}</p>
-              </div>
             </div>
 
-            {type === 'food' && (
-              <div className="mt-4 pt-4 border-t border-gray-100 space-y-3">
-                <div className="flex items-center gap-3 text-sm flex-wrap">
-                  {isVegetarian && <span className="badge bg-green-100 text-green-700">🌱 Vegetarian</span>}
-                  {isVegan && <span className="badge bg-green-100 text-green-700">🌿 Vegan</span>}
-                </div>
-                {allergens?.length > 0 && (
-                  <div>
-                    <p className="text-xs font-medium text-gray-400 uppercase mb-1.5">Contains Allergens</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {allergens.map((a) => (
-                        <span key={a} className="badge bg-red-100 text-red-700">{a}</span>
-                      ))}
+            <div className="p-8 bg-slate-50 rounded-[2rem] border border-slate-100 space-y-4">
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest italic">Node Constraints</p>
+              <div className="space-y-2">
+                 <div className="flex items-center justify-between">
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Dispatch Allowed</span>
+                    <span className={`badge ${deliveryAllowed ? '!bg-emerald-50 !text-emerald-600' : '!bg-slate-200 !text-slate-500'}`}>{deliveryAllowed ? 'YES' : 'NO'}</span>
+                 </div>
+                 {type === 'food' && (
+                   <>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Vegetarian Node</span>
+                      <span className="badge">{isVegetarian ? 'YES' : 'NO'}</span>
                     </div>
-                  </div>
-                )}
+                    {allergens?.length > 0 && (
+                      <div className="pt-2">
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2 text-rose-500">Risk Matrix (Allergens)</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {allergens.map(a => <span key={a} className="badge !bg-rose-50 !text-rose-600">{a}</span>)}
+                        </div>
+                      </div>
+                    )}
+                   </>
+                 )}
+                 {type === 'clothes' && clothingDetails && (
+                   <div className="flex flex-wrap gap-2 pt-2">
+                      {Object.entries(clothingDetails).map(([k, v]) => v && (
+                        <span key={k} className="badge !bg-slate-200 !text-slate-600">{k}: {v}</span>
+                      ))}
+                   </div>
+                 )}
               </div>
-            )}
+            </div>
+          </div>
+        </div>
 
-            {type === 'clothes' && clothingDetails && Object.values(clothingDetails).some(Boolean) && (
-              <div className="mt-4 pt-4 border-t border-gray-100">
-                <div className="flex flex-wrap gap-2 text-sm">
-                  {clothingDetails.gender    && <span className="badge bg-purple-100 text-purple-700">{clothingDetails.gender}</span>}
-                  {clothingDetails.size      && <span className="badge bg-gray-100 text-gray-700">Size: {clothingDetails.size}</span>}
-                  {clothingDetails.season    && <span className="badge bg-blue-100 text-blue-700">{clothingDetails.season}</span>}
-                  {clothingDetails.condition && <span className="badge bg-green-100 text-green-700">{clothingDetails.condition}</span>}
-                </div>
-              </div>
+        {/* Right Sidebar: Interaction Node */}
+        <div className="lg:col-span-4 space-y-8">
+          
+          {/* Identity Card */}
+          <div className="p-8 bg-slate-900 rounded-[2.5rem] text-white space-y-6 relative overflow-hidden">
+            <div className="absolute top-0 right-0 p-8 text-6xl opacity-10">👤</div>
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest italic relative z-10">Originating Node</p>
+            <div className="flex items-center gap-4 relative z-10">
+               <div className="w-16 h-16 rounded-2xl bg-white/10 flex items-center justify-center text-xl font-black italic border border-white/20">
+                 {donorId?.avatar ? <img src={donorId.avatar} className="w-full h-full object-cover rounded-2xl" /> : getInitials(donorId?.name)}
+               </div>
+               <div>
+                 <p className="text-xl font-black tracking-tight uppercase">{donorId?.name}</p>
+                 <p className="text-[9px] font-black text-emerald-500 uppercase tracking-widest mt-1">Verified Donor Node</p>
+               </div>
+            </div>
+            {donorId?.rating?.count > 0 && (
+               <div className="pt-4 flex items-center gap-2 border-t border-white/5 relative z-10">
+                 <span className="text-amber-400 font-bold">★ {donorId.rating.average.toFixed(1)}</span>
+                 <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">({donorId.rating.count} Syncs)</span>
+               </div>
             )}
           </div>
 
-          {/* Claim section for NGO */}
+          {/* Allocation Protocol for NGO */}
           {user.role === 'ngo' && status === 'available' && (
-            <div className="card">
+            <div className="p-2 bg-emerald-50 rounded-[2.5rem] space-y-1">
               {!showClaimForm ? (
-                <div className="space-y-3">
-                  <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-sm text-blue-800">
-                    <p className="font-semibold mb-0.5">How claiming works</p>
-                    <p className="text-xs">Send a request → Donor approves → You choose self-pickup or delivery agent</p>
-                  </div>
-                  <button
-                    onClick={() => setShowClaimForm(true)}
-                    disabled={!user.verified}
-                    className="btn-primary w-full text-base py-3 disabled:opacity-50"
-                  >
-                    🤝 Request This Donation
-                  </button>
-                  {!user.verified && (
-                    <p className="text-xs text-amber-600 text-center font-medium">⚠️ Your NGO must be verified to claim donations</p>
-                  )}
-                </div>
+                <button
+                  onClick={() => setShowClaimForm(true)}
+                  disabled={!user.verified}
+                  className="btn-primary w-full !py-8 !rounded-[2.3rem] !text-[12px] font-black uppercase tracking-[0.2em] shadow-xl shadow-emerald-200 disabled:opacity-30"
+                >
+                   Initiate Allocation
+                </button>
               ) : (
-                <div className="space-y-4">
-                  <h3 className="font-semibold text-gray-800">Send Claim Request</h3>
-                  <textarea
-                    value={message}
-                    onChange={(e) => setMessage(e.target.value)}
-                    className="input-field resize-none"
-                    rows={3}
-                    placeholder="Optional message to donor — introduce your NGO or explain urgency…"
-                    maxLength={500}
-                  />
-                  <p className="text-xs text-gray-400">After the donor approves, you'll choose self-pickup or request a delivery agent.</p>
-                  <div className="flex gap-3">
-                    <button onClick={() => { setShowClaimForm(false); setMessage(''); }} className="btn-secondary flex-1">Cancel</button>
-                    <button onClick={handleClaim} disabled={claiming} className="btn-primary flex-1 flex items-center justify-center gap-2">
-                      {claiming ? <LoadingSpinner size="sm" color="white" /> : null}
-                      {claiming ? 'Sending…' : 'Send Request'}
+                <div className="p-6 space-y-6 animate-fade-in bg-white rounded-[2.3rem] border-2 border-emerald-100 shadow-xl shadow-emerald-100">
+                  <div className="space-y-1">
+                    <h3 className="text-[10px] font-black text-emerald-600 uppercase tracking-widest italic">Allocation Message</h3>
+                    <textarea
+                      value={message}
+                      onChange={(e) => setMessage(e.target.value)}
+                      className="input-field !rounded-[1.5rem] !bg-slate-50 !border-slate-100 focus:!bg-white resize-none text-xs font-bold uppercase tracking-tight"
+                      rows={4}
+                      placeholder="Input purpose or urgency matrix..."
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => setShowClaimForm(false)} className="flex-1 btn-secondary !py-4 !rounded-2xl text-[10px] font-black uppercase">Abort</button>
+                    <button onClick={handleClaim} disabled={claiming} className="flex-1 btn-primary !py-4 !rounded-2xl text-[10px] font-black uppercase border-none shadow-lg shadow-emerald-200">
+                       {claiming ? <LoadingSpinner size="sm" color="white" /> : 'Confirm'}
                     </button>
                   </div>
                 </div>
               )}
-            </div>
-          )}
-
-          {/* Donor: donor sees their own donation */}
-          {user.role === 'donor' && donation.donorId?._id === user._id && (
-            <div className="card bg-orange-50 border border-orange-100">
-              <p className="text-sm font-semibold text-orange-800 mb-1">Your donation</p>
-              <p className="text-xs text-orange-600">Check your dashboard to approve or reject incoming claim requests.</p>
-              <Link to="/donor" className="mt-3 inline-block btn-donor text-sm py-2 px-4">Go to Dashboard</Link>
-            </div>
-          )}
-        </div>
-
-        {/* Sidebar */}
-        <div className="lg:col-span-2 space-y-5">
-          {/* Donor info */}
-          {donorId && (
-            <div className="card">
-              <h3 className="font-semibold text-gray-800 mb-4">Donor</h3>
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold text-lg flex-shrink-0 overflow-hidden">
-                  {donorId.avatar ? (
-                    <img src={donorId.avatar} alt={donorId.name} className="w-12 h-12 object-cover" />
-                  ) : (
-                    getInitials(donorId.name)
-                  )}
-                </div>
-                <div>
-                  <p className="font-semibold text-gray-900">{donorId.name}</p>
-                  {donorId.phone && <p className="text-xs text-gray-400">{donorId.phone}</p>}
-                </div>
-              </div>
-              {donorId.rating?.count > 0 && (
-                <div className="mt-3 flex items-center gap-1 text-sm">
-                  <span className="text-yellow-500">★</span>
-                  <span className="font-semibold">{donorId.rating.average.toFixed(1)}</span>
-                  <span className="text-gray-400">({donorId.rating.count} reviews)</span>
-                </div>
+              {!user.verified && (
+                <p className="text-[9px] font-black text-amber-600 text-center py-4 uppercase tracking-widest">NGO Node requires verification for interaction</p>
               )}
             </div>
           )}
 
-          {/* Map */}
-          <div className="card">
-            <h3 className="font-semibold text-gray-800 mb-3">Pickup Location</h3>
-            <MapView
-              donations={[donation]}
-              height="200px"
-              showControls={false}
-            />
-            {location?.address && (
-              <p className="text-xs text-gray-500 mt-2">📍 {location.address}</p>
-            )}
+          {/* Location Grid */}
+          <div className="p-2 bg-slate-50 rounded-[2.5rem] border border-slate-100 overflow-hidden">
+             <div className="p-6 space-y-4">
+               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest italic text-center">Satellite Convergence</p>
+               <div className="rounded-[2rem] overflow-hidden border border-slate-200 grayscale contrast-125">
+                 <MapView donations={[donation]} height="250px" showControls={false} />
+               </div>
+               {location?.address && <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest text-center mt-2 pb-2">📍 Grid Ref: {location.address}</p>}
+             </div>
           </div>
         </div>
       </div>

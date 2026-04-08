@@ -24,6 +24,18 @@ const buildHeaders = (isFormData = false) => {
 const handleResponse = async (res) => {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    console.error(`[API ERROR] ${res.status} ${res.url}:`, data.message || 'Unknown error');
+    
+    // Auto-purge stale tokens on authorization failure
+    if (res.status === 401) {
+      const authErrors = ['User not found or deactivated', 'Token invalid or expired', 'Not authorized'];
+      if (authErrors.some(msg => data.message?.includes(msg)) || !data.message) {
+        console.warn('[AUTH] Stale session detected. Purging credentials...');
+        localStorage.removeItem('d2d_token');
+        window.location.href = '/login';
+      }
+    }
+
     const error = new Error(data.message || `HTTP ${res.status}`);
     error.status = res.status;
     error.data = data;
@@ -38,11 +50,16 @@ export const api = {
     Object.entries(params).forEach(([k, v]) => {
       if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v);
     });
-    const res = await fetch(url.toString(), {
-      method: 'GET',
-      headers: buildHeaders(),
-    });
-    return handleResponse(res);
+    try {
+      const res = await fetch(url.toString(), {
+        method: 'GET',
+        headers: buildHeaders(),
+      });
+      return handleResponse(res);
+    } catch (err) {
+      console.error(`[API GET ERROR] ${path}:`, err.message);
+      throw err;
+    }
   },
 
   post: async (path, body = {}) => {

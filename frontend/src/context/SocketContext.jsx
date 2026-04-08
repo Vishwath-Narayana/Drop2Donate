@@ -20,49 +20,43 @@ export const SocketProvider = ({ children }) => {
       return;
     }
 
-    const socket = io('/', {
+    // io() with no URL uses the current origin.
+    // Vite proxies /socket.io → http://localhost:5001 so this works in dev.
+    // polling first is more reliable through proxies; socket.io auto-upgrades to ws.
+    const socket = io({
       auth: { token },
-      transports: ['websocket', 'polling'],
-      reconnectionAttempts: 5,
-      reconnectionDelay: 2000,
+      transports: ['polling', 'websocket'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,   // never give up — backend may restart
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
     });
 
     socketRef.current = socket;
 
     socket.on('connect', () => {
       setConnected(true);
-      console.log('[Socket] Connected:', socket.id);
     });
 
-    socket.on('disconnect', () => {
+    socket.on('disconnect', (reason) => {
       setConnected(false);
-    });
-
-    socket.on('connect_error', (err) => {
-      console.error('[Socket] Connection error:', err.message);
-    });
-
-    // Global notification handlers
-    socket.on('new_donation', ({ donation, message }) => {
-      if (user.role === 'ngo') {
-        toast.success(message || 'New donation available nearby', { duration: 5000 });
+      // 'io server disconnect' means server actively disconnected us (e.g. bad auth)
+      // In that case don't reconnect automatically
+      if (reason === 'io server disconnect') {
+        socket.connect();
       }
     });
 
-    socket.on('donation_claimed', ({ message }) => {
-      toast.success(message, { duration: 6000 });
+    socket.on('connect_error', (err) => {
+      // Only log — don't spam toasts on every retry
+      console.warn('[Socket] connect error:', err.message);
     });
 
-    socket.on('claim_status_updated', ({ message }) => {
-      toast(message, { duration: 5000 });
-    });
-
-    socket.on('delivery_accepted', ({ message }) => {
-      toast.success(message, { duration: 6000 });
-    });
-
-    socket.on('delivery_status_update', ({ message }) => {
-      toast(message, { duration: 5000 });
+    // ── Global notification handlers ─────────────────────────────────────────
+    socket.on('new_donation', ({ message }) => {
+      if (user.role === 'ngo') {
+        toast(message || 'New donation available nearby', { icon: '🍱', duration: 5000 });
+      }
     });
 
     socket.on('account_verified', ({ verified, message }) => {
@@ -78,7 +72,7 @@ export const SocketProvider = ({ children }) => {
       socketRef.current = null;
       setConnected(false);
     };
-  }, [token, user]);
+  }, [token, user?._id]); // use user._id not user object to avoid re-running on every user update
 
   const joinDeliveryRoom = (deliveryId) => {
     socketRef.current?.emit('join_delivery_room', deliveryId);
@@ -103,7 +97,15 @@ export const SocketProvider = ({ children }) => {
 
   return (
     <SocketContext.Provider
-      value={{ socket: socketRef.current, connected, joinDeliveryRoom, leaveDeliveryRoom, emitLocationUpdate, on, off }}
+      value={{
+        socket: socketRef.current,
+        connected,
+        joinDeliveryRoom,
+        leaveDeliveryRoom,
+        emitLocationUpdate,
+        on,
+        off,
+      }}
     >
       {children}
     </SocketContext.Provider>
